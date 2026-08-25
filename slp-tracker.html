@@ -55,6 +55,26 @@
     border: 1px solid var(--line); border-radius: 5px; padding: 5px 7px;
   }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .panel { border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-bottom: 22px; }
+  .panel h2 { font-size: 14px; margin: 0 0 10px; text-transform: uppercase;
+              letter-spacing: .04em; color: var(--muted); }
+  .row-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .student-row { display: flex; gap: 10px; align-items: center; padding: 5px 0;
+                 border-bottom: 1px solid var(--line); }
+  .student-row:last-child { border-bottom: none; }
+  .student-row .grow { flex: 1; }
+  .week { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+  .day-column { border: 1px solid var(--line); border-radius: 8px; padding: 8px; min-height: 120px; }
+  .day-name { font-weight: 600; font-size: 13px; margin-bottom: 8px; }
+  .slot-card { border: 1px solid var(--line); border-radius: 6px; padding: 7px;
+               margin-bottom: 7px; background: var(--row); }
+  .slot-time { font-weight: 600; font-size: 13px; }
+  .slot-roster { font-size: 13px; color: var(--muted); }
+  .slot-student { display: inline-flex; gap: 5px; align-items: center; margin-right: 10px; }
+  .linkish { background: none; border: none; color: var(--accent); cursor: pointer;
+             font: inherit; padding: 0; text-decoration: underline; }
+  .danger-link { color: var(--danger); }
 </style>
 </head>
 <body>
@@ -781,7 +801,7 @@ SLP.ui = (() => {
     ['schedule', 'Schedule'],
   ];
 
-  async function render() {
+  async function doRender() {
     const app = $('#app');
     clear(app);
     app.appendChild(
@@ -802,12 +822,181 @@ SLP.ui = (() => {
     else root.appendChild(h('p', { class: 'empty', text: 'Nothing here yet.' }));
   }
 
+  // Coalescing render loop. Two problems this solves at once:
+  //  1. Overlapping renders (a click handler's own render() racing a caller's
+  //     explicit one) must not both call clear(app) concurrently — that
+  //     detaches whichever root loses the race mid-build.
+  //  2. A caller awaiting render() right after triggering a write (whose own
+  //     handler re-renders once the write settles) must see the FINAL state,
+  //     not whatever was on screen the instant its own call happened to
+  //     resolve. So every render() call waits for the render loop to run to
+  //     quiescence — if another render is requested while one is in flight,
+  //     the loop runs again before anyone waiting is told it's done.
+  let rendering = false;
+  let renderAgain = false;
+  let waiters = [];
+
+  function render() {
+    return new Promise(resolve => {
+      waiters.push(resolve);
+      if (rendering) { renderAgain = true; return; }
+      runRenderLoop();
+    });
+  }
+
+  async function runRenderLoop() {
+    rendering = true;
+    do {
+      renderAgain = false;
+      await doRender();
+    } while (renderAgain);
+    rendering = false;
+    const done = waiters;
+    waiters = [];
+    done.forEach(fn => fn());
+  }
+
   async function go(patch) {
     Object.assign(route, patch);
     await render();
   }
 
   return { $, $$, clear, h, route, go, render, views, toast, todayStr };
+})();
+
+// ============================================================
+// SECTION: ui.schedule — caseload and the weekly template.
+// The template is not history: editing it never rewrites a past session.
+// ============================================================
+(() => {
+  const { h, go, toast } = SLP.ui;
+  const DAYS = [[1, 'Monday'], [2, 'Tuesday'], [3, 'Wednesday'], [4, 'Thursday'], [5, 'Friday']];
+
+  const draft = { studentIds: new Set() };   // survives re-render within the tab
+
+  async function caseloadPanel() {
+    const students = await SLP.store.listStudents({});
+    const active = students.filter(s => s.active);
+
+    const list = h('div', { id: 'caseload-list' });
+    if (!active.length) {
+      list.appendChild(h('p', { class: 'muted', text: 'No students on the caseload yet.' }));
+    }
+    for (const s of active) {
+      list.appendChild(
+        h('div', { class: 'student-row', 'data-student-id': s.id, 'data-student-name': s.name },
+          h('span', { class: 'grow', text: s.name + (s.grade ? ' · grade ' + s.grade : '') }),
+          h('button', {
+            class: 'linkish toggle-active', type: 'button', text: 'Remove from caseload',
+            'on:click': async () => {
+              await SLP.store.setStudentActive(s.id, false);
+              toast(s.name + ' removed from the caseload. Their history is kept.', 'ok');
+              await SLP.ui.render();
+            },
+          })));
+    }
+    const inactive = students.filter(s => !s.active);
+    if (inactive.length) {
+      list.appendChild(h('p', { class: 'muted', id: 'inactive-note',
+        text: inactive.length + ' former student' + (inactive.length > 1 ? 's' : '') +
+              ' kept for their history.' }));
+    }
+
+    const name = h('input', { type: 'text', id: 'new-student-name', placeholder: 'Student name' });
+    const grade = h('input', { type: 'text', id: 'new-student-grade', placeholder: 'Grade',
+                               style: 'width:70px' });
+    const school = h('input', { type: 'text', id: 'new-student-school', placeholder: 'School' });
+
+    return h('section', { class: 'panel', id: 'caseload-editor' },
+      h('h2', { text: 'Caseload' }),
+      list,
+      h('div', { class: 'row-form', style: 'margin-top:10px' },
+        name, grade, school,
+        h('button', {
+          class: 'primary', id: 'add-student', type: 'button', text: 'Add student',
+          'on:click': async () => {
+            if (!name.value.trim()) { toast('A student needs a name.', 'warn'); return; }
+            await SLP.store.saveStudent(SLP.model.student({
+              name: name.value.trim(), grade: grade.value.trim(), school: school.value.trim(),
+            }));
+            await SLP.ui.render();
+          },
+        })));
+  }
+
+  async function slotForm(students) {
+    const day = h('select', { id: 'slot-day' },
+      DAYS.map(([v, label]) => h('option', { value: v, text: label })));
+    const start = h('input', { type: 'time', id: 'slot-start', value: '09:00' });
+    const end = h('input', { type: 'time', id: 'slot-end', value: '09:30' });
+    const location = h('input', { type: 'text', id: 'slot-location', placeholder: 'Room (optional)' });
+
+    const picker = h('div', { id: 'slot-students', style: 'margin:10px 0' },
+      students.length
+        ? students.map(s => {
+            const box = h('input', { type: 'checkbox', 'data-student-id': s.id });
+            box.checked = draft.studentIds.has(s.id);
+            box.addEventListener('change', () => {
+              box.checked ? draft.studentIds.add(s.id) : draft.studentIds.delete(s.id);
+            });
+            return h('label', { class: 'slot-student', 'data-student-id': s.id }, box, s.name);
+          })
+        : h('span', { class: 'muted', text: 'Add students above first.' }));
+
+    return h('section', { class: 'panel', id: 'slot-form' },
+      h('h2', { text: 'Add a recurring slot' }),
+      h('div', { class: 'row-form' }, day, start, 'to', end, location),
+      picker,
+      h('button', {
+        class: 'primary', id: 'add-slot', type: 'button', text: 'Add slot',
+        'on:click': async () => {
+          const ids = [...draft.studentIds];
+          if (!ids.length) { toast('Put at least one student in the slot.', 'warn'); return; }
+          if (!start.value || !end.value) { toast('A slot needs a start and end time.', 'warn'); return; }
+          if (end.value <= start.value) { toast('The end time must be after the start.', 'warn'); return; }
+          await SLP.store.saveSlot(SLP.model.slot({
+            dayOfWeek: Number(day.value), startTime: start.value, endTime: end.value,
+            studentIds: ids, location: location.value.trim(),
+          }));
+          draft.studentIds.clear();
+          await SLP.ui.render();
+        },
+      }));
+  }
+
+  async function weekGrid(students) {
+    const byId = Object.fromEntries(students.map(s => [s.id, s]));
+    const slots = await SLP.store.listSlots();
+    return h('section', { class: 'panel', id: 'week-grid' },
+      h('h2', { text: 'Weekly schedule' }),
+      h('div', { class: 'week' },
+        DAYS.map(([dow, label]) =>
+          h('div', { class: 'day-column', 'data-day': dow },
+            h('div', { class: 'day-name', text: label }),
+            slots.filter(s => s.dayOfWeek === dow).map(slot =>
+              h('div', { class: 'slot-card', 'data-slot-id': slot.id },
+                h('div', { class: 'slot-time',
+                           text: slot.startTime + '–' + slot.endTime +
+                                 (slot.location ? ' · ' + slot.location : '') }),
+                h('div', { class: 'slot-roster',
+                           text: slot.studentIds.map(id => byId[id] && byId[id].name)
+                                   .filter(Boolean).join(', ') || '(no students)' }),
+                h('button', {
+                  class: 'linkish danger-link delete-slot', type: 'button', text: 'Delete',
+                  'on:click': async () => {
+                    await SLP.store.deleteSlot(slot.id);
+                    toast('Slot deleted. Sessions already charted are untouched.', 'ok');
+                    await SLP.ui.render();
+                  },
+                })))))));
+  }
+
+  SLP.ui.views.schedule = async (root) => {
+    const students = await SLP.store.listStudents({ activeOnly: true });
+    root.appendChild(await caseloadPanel());
+    root.appendChild(await weekGrid(await SLP.store.listStudents({})));
+    root.appendChild(await slotForm(students));
+  };
 })();
 
 // ============================================================

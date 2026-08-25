@@ -141,6 +141,12 @@
   .chart-tick { fill: var(--muted); font-size: 10px; }
   .mastery { font-size: 13px; color: var(--muted); margin-top: 4px; }
   .mastery.met { color: var(--ok); font-weight: 600; }
+
+  #backup-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+                padding-bottom: 8px; font-size: 13px; }
+  #backup-status { color: var(--muted); }
+  #backup-nag { background: #fffaf0; border: 1px solid var(--warn); color: var(--warn);
+                border-radius: 6px; padding: 7px 11px; margin-bottom: 10px; font-size: 13px; }
 </style>
 </head>
 <body>
@@ -910,6 +916,8 @@ SLP.ui = (() => {
               'data-tab': id, type: 'button',
               'on:click': () => go({ tab: id }),
             }, label)))));
+
+    if (SLP.ui.backup) for (const el of await SLP.ui.backup.bar()) app.appendChild(el);
 
     const root = h('div', { class: 'view', id: 'view-' + route.tab });
     app.appendChild(root);
@@ -1793,6 +1801,96 @@ SLP.ui = (() => {
   };
 
   SLP.ui.chart = chart;
+})();
+
+// ============================================================
+// SECTION: ui.backup — the nag and the buttons.
+// persist() was DENIED: "Clear browsing data" wipes everything.
+// This bar is the only thing standing between her and a lost year.
+// ============================================================
+(() => {
+  const { h, toast } = SLP.ui;
+  const STALE_AFTER_DAYS = 3;
+
+  async function backupNow() {
+    try {
+      const { via } = await SLP.backup.backupNow();
+      toast(via === 'handle' ? 'Backed up to your linked file.' : 'Backup downloaded.', 'ok');
+    } catch (e) {
+      toast('Backup failed — ' + e.message, 'error');
+    }
+    await SLP.ui.render();
+  }
+
+  async function restoreFromFile(file) {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const { restored } = await SLP.backup.restoreFromText(text);
+      const n = Object.values(restored).reduce((a, b) => a + b, 0);
+      toast('Restored ' + n + ' records.', 'ok');
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+    await SLP.ui.render();
+  }
+
+  async function pickFile() {
+    try {
+      if (!SLP.backup.hasFileApi()) {
+        toast('This browser cannot link a backup file. Use Back up now instead.', 'warn');
+        return;
+      }
+      if (await SLP.backup.pickBackupFile()) {
+        await SLP.backup.writeToHandle();
+        toast('Backup file linked. One press saves to it from now on.', 'ok');
+      }
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;      // she closed the picker; not an error
+      toast('Could not link that file — ' + e.message, 'error');
+    }
+    await SLP.ui.render();
+  }
+
+  async function bar() {
+    const status = await SLP.backup.status();
+    const hasData = (await SLP.db.getAll('students')).length > 0;
+
+    const fileInput = h('input', { type: 'file', id: 'backup-restore-input',
+                                   accept: '.json,application/json',
+                                   style: 'display:none' });
+    fileInput.addEventListener('change', async () => {
+      await restoreFromFile(fileInput.files && fileInput.files[0]);
+    });
+
+    const els = [h('div', { class: 'backup-bar-inner', id: 'backup-bar' },
+      h('button', { class: 'primary', id: 'backup-now', type: 'button', text: 'Back up now',
+                    'on:click': backupNow }),
+      h('button', { class: 'plain', id: 'backup-pick', type: 'button',
+                    text: status.hasHandle ? 'Change backup file' : 'Link a backup file…',
+                    'on:click': pickFile }),
+      h('button', { class: 'plain', id: 'backup-restore', type: 'button', text: 'Restore…',
+                    'on:click': () => fileInput.click() }),
+      fileInput,
+      h('span', { id: 'backup-status',
+        text: (status.hasHandle ? 'Backup file linked' : 'Backup file not linked') +
+              ' · ' + (status.lastBackupAt
+                ? 'last backup ' + (status.staleDays === 0 ? 'today'
+                    : status.staleDays + ' day' + (status.staleDays === 1 ? '' : 's') + ' ago')
+                : 'never backed up') }))];
+
+    const stale = status.lastBackupAt === null || status.staleDays >= STALE_AFTER_DAYS;
+    if (hasData && stale) {
+      els.unshift(h('div', { id: 'backup-nag' },
+        status.lastBackupAt === null
+          ? 'This data has never been backed up. Chrome can clear it without warning — ' +
+            'press Back up now.'
+          : 'Last backup was ' + status.staleDays + ' days ago. Press Back up now.'));
+    }
+    return els;
+  }
+
+  SLP.ui.backup = { bar, backupNow, restoreFromFile, pickFile };
 })();
 
 // ============================================================

@@ -145,6 +145,119 @@ SLP.db = (() => {
 })();
 
 // ============================================================
+// SECTION: model — entity shapes and the entered-vs-pre-filled rule.
+// Pure functions only. No IO, no DOM, no await.
+// ============================================================
+SLP.model = (() => {
+  let counter = 0;
+  const uid = prefix =>
+    prefix + '_' + Date.now().toString(36) + (counter++).toString(36) +
+    Math.random().toString(36).slice(2, 7);
+  const now = () => new Date().toISOString();
+
+  const field = ({ label, type = 'number', default: def = null, role = null }) => ({
+    id: uid('f'), label, type, default: type === 'number' ? def : null, role,
+  });
+
+  // The preset carries the semantics: role pairing is what makes a ratio derivable.
+  const presetTrials = () => [
+    field({ label: 'Trials completed', type: 'number', default: null, role: 'achieved' }),
+    field({ label: 'Trials # goal', type: 'number', default: 4, role: 'target' }),
+    field({ label: 'Notes', type: 'text' }),
+  ];
+
+  function seedValues(objective) {
+    const values = {};
+    for (const f of objective.fields) {
+      values[f.id] = {
+        value: f.type === 'number' ? (f.default === undefined ? null : f.default) : '',
+        entered: false,   // a pre-filled default is NOT data entry
+      };
+    }
+    return values;
+  }
+
+  function defaultFor(f) {
+    return f.type === 'number' ? (f.default === undefined ? null : f.default) : '';
+  }
+
+  // The one rule the whole app leans on. `raw` is always what the input element holds.
+  function setValue(dp, objective, fieldId, raw) {
+    const f = objective.fields.find(x => x.id === fieldId);
+    if (!f) return dp;
+    const cell = dp.values[fieldId] || (dp.values[fieldId] = { value: defaultFor(f), entered: false });
+    const str = raw == null ? '' : String(raw);
+
+    if (str.trim() === '') {
+      // Cleared: fall back to the pre-filled default and stop counting as an observation.
+      cell.value = defaultFor(f);
+      cell.entered = false;
+      return dp;
+    }
+    if (f.type === 'number') {
+      const n = Number(str);
+      if (!Number.isFinite(n)) return dp;   // reject garbage, change nothing
+      cell.value = n;
+      cell.entered = true;                  // typing the default value is still an observation
+      return dp;
+    }
+    cell.value = str;
+    cell.entered = true;
+    return dp;
+  }
+
+  const hasEnteredData = dp =>
+    !!dp && Object.values(dp.values || {}).some(c => c.entered === true);
+
+  function ratio(objective, dp) {
+    const a = objective.fields.filter(f => f.role === 'achieved');
+    const t = objective.fields.filter(f => f.role === 'target');
+    if (a.length !== 1 || t.length !== 1) return null;
+    const av = dp.values[a[0].id], tv = dp.values[t[0].id];
+    if (!av || !tv) return null;
+    if (!av.entered) return null;                  // a pre-filled target alone measures nothing
+    if (typeof av.value !== 'number' || typeof tv.value !== 'number') return null;
+    if (!tv.value) return null;                    // never divide by zero
+    return { achieved: av.value, target: tv.value,
+             pct: Math.round((av.value / tv.value) * 100) };
+  }
+
+  const displayText = (text, studentName) =>
+    String(text || '').split('STUDENT').join(studentName || 'STUDENT');
+
+  return {
+    uid, now, field, presetTrials, seedValues, setValue, hasEnteredData, ratio, displayText,
+
+    student: ({ name, grade = '', school = '', background = '' }) => ({
+      id: uid('s'), name, grade, school, background,
+      active: true, createdAt: now(), updatedAt: now(),
+    }),
+    goal: ({ studentId, text, order = 0 }) => ({
+      id: uid('g'), studentId, text, order, createdAt: now(), updatedAt: now(),
+    }),
+    objective: ({ goalId, text, order = 0, fields = presetTrials() }) => ({
+      id: uid('o'), goalId, text, order, fields, createdAt: now(), updatedAt: now(),
+    }),
+    slot: ({ dayOfWeek, startTime, endTime, studentIds = [], location = '' }) => ({
+      id: uid('sl'), dayOfWeek, startTime, endTime, studentIds, location, createdAt: now(),
+    }),
+    session: ({ date, slotId = null, startTime, endTime, location = '', roster = [] }) => ({
+      id: uid('se'), date, slotId, startTime, endTime, location, roster, createdAt: now(),
+    }),
+    attendance: ({ sessionId, studentId, status, participation = 'scheduled', isMakeup = false }) => ({
+      id: uid('at'), sessionId, studentId, status, participation, isMakeup, updatedAt: now(),
+    }),
+    note: ({ sessionId, studentId, text = '' }) => ({
+      id: uid('n'), sessionId, studentId, text, updatedAt: now(),
+    }),
+    datapoint: ({ sessionId, studentId, objective }) => ({
+      id: uid('dp'), sessionId, studentId, objectiveId: objective.id,
+      values: seedValues(objective), updatedAt: now(),
+    }),
+  };
+})();
+
+// ============================================================
 // SECTION: boot — wire everything up.
 // ============================================================
 SLP.ready = Promise.resolve();

@@ -258,6 +258,219 @@ SLP.model = (() => {
 })();
 
 // ============================================================
+// SECTION: store — repositories and write paths.
+// Sessions materialize on write, never on read.
+// ============================================================
+SLP.store = (() => {
+  const db = SLP.db, m = SLP.model;
+  const byName = (a, b) => a.name.localeCompare(b.name);
+
+  // 'YYYY-MM-DD' -> 0..6, parsed as a local date so it never shifts a day by timezone.
+  function dayOfWeek(dateStr) {
+    const [y, mo, d] = dateStr.split('-').map(Number);
+    return new Date(y, mo - 1, d).getDay();
+  }
+
+  async function findSession(dateStr, slotId) {
+    const onDate = await db.getAllBy('sessions', 'date', dateStr);
+    return onDate.find(s => s.slotId === slotId) || null;
+  }
+
+  async function ensureSession(dateStr, slot) {
+    const existing = await findSession(dateStr, slot.id);
+    if (existing) return existing;
+    const session = m.session({
+      date: dateStr, slotId: slot.id, startTime: slot.startTime,
+      endTime: slot.endTime, location: slot.location,
+      roster: [...slot.studentIds],       // snapshot, not a reference
+    });
+    await db.put('sessions', session);
+    return session;
+  }
+
+  async function rowFor(store, sessionId, studentId) {
+    const rows = await db.getAllBy(store, 'sessionId', sessionId);
+    return rows.find(r => r.studentId === studentId) || null;
+  }
+
+  // Attendance derives from data entry, but never overrides an explicit mark.
+  async function deriveAttendance(session, studentId) {
+    const existing = await rowFor('attendance', session.id, studentId);
+    if (existing && existing.status !== 'present') return existing;   // hers, leave it
+
+    const dps = (await db.getAllBy('datapoints', 'sessionId', session.id))
+      .filter(d => d.studentId === studentId);
+    const note = await rowFor('notes', session.id, studentId);
+    const touched = dps.some(m.hasEnteredData) || !!(note && note.text.trim());
+
+    if (touched) {
+      const row = existing || m.attendance({
+        sessionId: session.id, studentId, status: 'present',
+        participation: session.roster.includes(studentId) ? 'scheduled' : 'added',
+      });
+      row.status = 'present';
+      row.updatedAt = m.now();
+      await db.put('attendance', row);
+      return row;
+    }
+    // Nothing entered any more — withdraw a mark the app itself derived.
+    if (existing) await db.del('attendance', existing.id);
+    return null;
+  }
+
+  return {
+    // --- caseload ---
+    async listStudents({ activeOnly = false } = {}) {
+      const all = await db.getAll('students');
+      return all.filter(s => !activeOnly || s.active).sort(byName);
+    },
+    saveStudent: s => db.put('students', Object.assign(s, { updatedAt: m.now() })),
+    async setStudentActive(id, active) {
+      const s = await db.get('students', id);
+      if (!s) return null;
+      s.active = active; s.updatedAt = m.now();
+      return db.put('students', s);
+    },
+
+    // --- goals and objectives ---
+    async goalsFor(studentId) {
+      return (await db.getAllBy('goals', 'studentId', studentId))
+        .sort((a, b) => a.order - b.order);
+    },
+    async objectivesFor(goalId) {
+      return (await db.getAllBy('objectives', 'goalId', goalId))
+        .sort((a, b) => a.order - b.order);
+    },
+    async objectivesForStudent(studentId) {
+      const goals = await this.goalsFor(studentId);
+      const out = [];
+      for (const goal of goals) out.push({ goal, objectives: await this.objectivesFor(goal.id) });
+      return out;
+    },
+    saveGoal: g => db.put('goals', Object.assign(g, { updatedAt: m.now() })),
+    saveObjective: o => db.put('objectives', Object.assign(o, { updatedAt: m.now() })),
+    deleteObjective: id => db.del('objectives', id),
+
+    // --- schedule ---
+    async listSlots() {
+      return (await db.getAll('slots')).sort(
+        (a, b) => a.dayOfWeek - b.dayOfWeek || a.startTime.localeCompare(b.startTime));
+    },
+    saveSlot: sl => db.put('slots', sl),
+    deleteSlot: id => db.del('slots', id),
+
+    ensureSession,
+
+    // --- the day view ---
+    // Read-only. Materializes nothing, so browsing a future day keeps tracking the template.
+    async planForDate(dateStr) {
+      const dow = dayOfWeek(dateStr);
+      const slots = (await this.listSlots()).filter(s => s.dayOfWeek === dow);
+      const students = await db.getAll('students');
+      const byId = Object.fromEntries(students.map(s => [s.id, s]));
+      const adHoc = (await db.getAllBy('sessions', 'date', dateStr)).filter(s => !s.slotId);
+      const entries = [];
+
+      const build = async (slot, session) => {
+        const roster = session ? session.roster : slot.studentIds;
+        const entry = {
+          slot, session,
+          students: roster.map(id => byId[id]).filter(Boolean).sort(byName),
+          attendance: {}, notes: {}, datapoints: {}, objectives: {},
+        };
+        if (session) {
+          for (const a of await db.getAllBy('attendance', 'sessionId', session.id)) {
+            entry.attendance[a.studentId] = a;
+          }
+          for (const n of await db.getAllBy('notes', 'sessionId', session.id)) {
+            entry.notes[n.studentId] = n;
+          }
+          for (const d of await db.getAllBy('datapoints', 'sessionId', session.id)) {
+            (entry.datapoints[d.studentId] || (entry.datapoints[d.studentId] = {}))[d.objectiveId] = d;
+          }
+        }
+        for (const s of entry.students) {
+          entry.objectives[s.id] = await this.objectivesForStudent(s.id);
+        }
+        return entry;
+      };
+
+      for (const slot of slots) entries.push(await build(slot, await findSession(dateStr, slot.id)));
+      for (const session of adHoc) {
+        entries.push(await build(
+          { id: null, dayOfWeek: dow, startTime: session.startTime,
+            endTime: session.endTime, studentIds: session.roster, location: session.location },
+          session));
+      }
+      return entries.sort((a, b) => a.slot.startTime.localeCompare(b.slot.startTime));
+    },
+
+    // --- write paths (each materializes, then re-derives attendance) ---
+    async recordValue({ dateStr, slot, studentId, objectiveId, fieldId, raw }) {
+      const session = await ensureSession(dateStr, slot);
+      const objective = await db.get('objectives', objectiveId);
+      if (!objective) throw new Error('unknown objective: ' + objectiveId);
+      const existing = (await db.getAllBy('datapoints', 'sessionId', session.id))
+        .find(d => d.studentId === studentId && d.objectiveId === objectiveId);
+      const dp = existing || m.datapoint({ sessionId: session.id, studentId, objective });
+      m.setValue(dp, objective, fieldId, raw);
+      dp.updatedAt = m.now();
+      await db.put('datapoints', dp);
+      await deriveAttendance(session, studentId);
+      return dp;
+    },
+
+    async setAttendance({ dateStr, slot, studentId, status }) {
+      const session = await ensureSession(dateStr, slot);
+      const existing = await rowFor('attendance', session.id, studentId);
+      const row = existing || m.attendance({
+        sessionId: session.id, studentId, status,
+        participation: session.roster.includes(studentId) ? 'scheduled' : 'added',
+      });
+      row.status = status;
+      row.updatedAt = m.now();
+      await db.put('attendance', row);
+      return row;
+    },
+
+    async saveNote({ dateStr, slot, studentId, text }) {
+      const session = await ensureSession(dateStr, slot);
+      const existing = await rowFor('notes', session.id, studentId);
+      const row = existing || m.note({ sessionId: session.id, studentId });
+      row.text = text;
+      row.updatedAt = m.now();
+      await db.put('notes', row);
+      await deriveAttendance(session, studentId);
+      return row;
+    },
+
+    async addStudentToSession(sessionId, studentId) {
+      const session = await db.get('sessions', sessionId);
+      if (!session || session.roster.includes(studentId)) return session;
+      session.roster.push(studentId);
+      await db.put('sessions', session);
+      await db.put('attendance', m.attendance({
+        sessionId, studentId, status: 'present', participation: 'added',
+      }));
+      return session;
+    },
+
+    async removeStudentFromSession(sessionId, studentId) {
+      const session = await db.get('sessions', sessionId);
+      if (!session) return null;
+      session.roster = session.roster.filter(id => id !== studentId);
+      await db.put('sessions', session);
+      for (const store of ['attendance', 'notes', 'datapoints']) {
+        for (const row of await db.getAllBy(store, 'sessionId', sessionId)) {
+          if (row.studentId === studentId) await db.del(store, row.id);
+        }
+      }
+      return session;
+    },
+  };
+})();
+
+// ============================================================
 // SECTION: boot — wire everything up.
 // ============================================================
 SLP.ready = Promise.resolve();

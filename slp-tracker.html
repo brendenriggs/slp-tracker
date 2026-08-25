@@ -77,6 +77,14 @@
   .danger-link { color: var(--danger); }
 
   .split { display: grid; grid-template-columns: 250px 1fr; gap: 20px; align-items: start; }
+  /* Search and grade share a row; the school select takes its own so long school names
+     stay readable — a truncated one can't be told apart from a near-identical typo. */
+  .student-filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .student-filters #student-search { flex: 1; min-width: 0; }
+  /* min-width:0 is load-bearing: without it the select claims its longest option's width
+     and overflows the 250px column onto the detail pane. The closed label ellipsises, but
+     the open list still shows every school in full, which is where a typo is spotted. */
+  .student-filters #student-school-filter { flex-basis: 100%; min-width: 0; max-width: 100%; }
   .goal-block { border: 1px solid var(--line); border-radius: 8px; padding: 12px;
                 margin-bottom: 16px; }
   .goal-text { font-size: 14px; margin: 0 0 8px; }
@@ -156,7 +164,7 @@
 // SLP Session Tracker — one file, no build step, no network.
 // Sections below are ordered by dependency; each only uses those above it.
 // ============================================================
-window.SLP = { version: '1.1.0' };
+window.SLP = { version: '1.2.0' };
 
 // ============================================================
 // SECTION: db — IndexedDB access. Knows stores, not meaning.
@@ -1018,7 +1026,20 @@ SLP.ui = (() => {
     await render();
   }
 
-  return { $, $$, clear, h, route, go, render, views, toast, todayStr };
+  // The one grade picker. It lives here rather than in ui.schedule because the caseload
+  // add form, the caseload edit row, and the students filter must never disagree about
+  // what a grade is; blankLabel is the only thing that legitimately differs between them.
+  function gradeSelect(id, value, blankLabel) {
+    return h('select', { id },
+      h('option', { value: '', text: blankLabel }),       // grade stays optional
+      SLP.model.GRADES.map(g => {
+        const opt = h('option', { value: g.value, text: g.label });
+        if (String(value || '') === g.value) opt.selected = true;
+        return opt;
+      }));
+  }
+
+  return { $, $$, clear, h, route, go, render, views, toast, todayStr, gradeSelect };
 })();
 
 // ============================================================
@@ -1033,23 +1054,19 @@ SLP.ui = (() => {
 
   const rowLabel = s => s.name + (s.grade ? ' · ' + SLP.model.gradeLabel(s.grade) : '');
 
-  // One grade picker and one school box, built the same way wherever they appear, so the
-  // add form and the edit row can never drift apart on what a grade or a school is.
-  function gradeSelect(id, value) {
-    return h('select', { id },
-      h('option', { value: '', text: 'Grade' }),          // grade stays optional
-      SLP.model.GRADES.map(g => {
-        const opt = h('option', { value: g.value, text: g.label });
-        if (String(value || '') === g.value) opt.selected = true;
-        return opt;
-      }));
-  }
+  // One school box built the same way wherever it appears, so the add form and the edit
+  // row can never drift apart on what a school is. The grade picker is SLP.ui.gradeSelect,
+  // shared with the students filter for the same reason.
+  const gradeSelect = (id, value) => SLP.ui.gradeSelect(id, value, 'Grade');
 
-  // A native datalist, not a hand-rolled combobox: she gets type-to-filter and the full
-  // list from the caret for free, and anything she types that is new is simply accepted.
+  // A native datalist, not a hand-rolled combobox: she gets type-to-filter for free, and
+  // anything she types that is new is simply accepted. The trade is discoverability —
+  // Chrome gives the input no dropdown arrow at rest (see the placeholder below).
   function schoolBox(id, listId, value, schools) {
     return [
-      h('input', { type: 'text', id, list: listId, placeholder: 'School',
+      // Chrome only shows the datalist caret on hover, so the placeholder carries the
+      // "there is a list here" message that the control itself never gives her.
+      h('input', { type: 'text', id, list: listId, placeholder: 'School — pick or type',
                    value: value || '', autocomplete: 'off' }),
       h('datalist', { id: listId }, schools.map(name => h('option', { value: name }))),
     ];
@@ -1217,7 +1234,7 @@ SLP.ui = (() => {
 (() => {
   const { h, toast } = SLP.ui;
   const m = SLP.model;
-  const ui = { search: '', armedDelete: null };
+  const ui = { search: '', gradeFilter: '', schoolFilter: '', armedDelete: null };
 
   // Exported: Task 10 reuses this for ad hoc objective tweaks.
   function fieldEditor(objective, onChange) {
@@ -1403,12 +1420,42 @@ SLP.ui = (() => {
 
   SLP.ui.views.students = async (root) => {
     const students = await SLP.store.listStudents({ activeOnly: true });
+    // Derived from the students on screen, not from every record: this list is active-only,
+    // so a former student's school could never match and would just be a dead option.
+    const schools = SLP.derive.schools(students);
+    // Editing the last student out of a school strands a filter pointing at it. Letting go
+    // is the only honest move — the alternative is an empty caseload beside a blank select.
+    if (ui.schoolFilter && !schools.includes(ui.schoolFilter)) ui.schoolFilter = '';
+
     const q = ui.search.trim().toLowerCase();
-    const shown = q ? students.filter(s => s.name.toLowerCase().includes(q)) : students;
+    // Every filter is a narrowing, so they compose as AND and an empty one constrains
+    // nothing. She can search a name within a grade without either fighting the other.
+    const shown = students.filter(s =>
+      (!q || s.name.toLowerCase().includes(q)) &&
+      (!ui.gradeFilter || String(s.grade || '') === ui.gradeFilter) &&
+      (!ui.schoolFilter || s.school === ui.schoolFilter));
 
     const search = h('input', { type: 'text', id: 'student-search', placeholder: 'Search…',
                                 value: ui.search });
     search.addEventListener('input', async () => { ui.search = search.value; await SLP.ui.render(); });
+
+    const gradeFilter = SLP.ui.gradeSelect('student-grade-filter', ui.gradeFilter, 'Any grade');
+    gradeFilter.addEventListener('change', async () => {
+      ui.gradeFilter = gradeFilter.value;
+      await SLP.ui.render();
+    });
+
+    const schoolFilter = h('select', { id: 'student-school-filter' },
+      h('option', { value: '', text: 'Any school' }),
+      schools.map(name => {
+        const opt = h('option', { value: name, text: name });
+        if (name === ui.schoolFilter) opt.selected = true;
+        return opt;
+      }));
+    schoolFilter.addEventListener('change', async () => {
+      ui.schoolFilter = schoolFilter.value;
+      await SLP.ui.render();
+    });
 
     const list = h('div', { id: 'student-list' },
       shown.length ? null : h('p', { class: 'muted', text: 'No matching students.' }),
@@ -1426,7 +1473,7 @@ SLP.ui = (() => {
     else detail.appendChild(h('p', { class: 'empty', text: 'Pick a student to see their goals.' }));
 
     root.appendChild(h('div', { class: 'split' },
-      h('div', {}, search, list),
+      h('div', {}, h('div', { class: 'student-filters' }, search, gradeFilter, schoolFilter), list),
       detail));
   };
 

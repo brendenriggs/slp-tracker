@@ -28,6 +28,97 @@ test('search filters the caseload', async () => {
   eq(names, ['Bo'], 'case-insensitive substring match');
 });
 
+test('the grade filter narrows the list', async () => {
+  const w = await loadApp();
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Ada', grade: '3' }));
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Bo', grade: '7' }));
+  const doc = await openStudents(w);
+  setInput(doc.querySelector('#student-grade-filter'), '3');
+  await w.SLP.ui.render();
+  const names = Array.from(doc.querySelectorAll('#student-list .student-row'))
+    .map(r => r.dataset.studentName);
+  eq(names, ['Ada'], 'only the third grader');
+});
+
+test('the school filter narrows the list', async () => {
+  const w = await loadApp();
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Ada', school: 'Lincoln Elementary' }));
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Bo', school: 'Roosevelt Middle' }));
+  const doc = await openStudents(w);
+  setInput(doc.querySelector('#student-school-filter'), 'Lincoln Elementary');
+  await w.SLP.ui.render();
+  const names = Array.from(doc.querySelectorAll('#student-list .student-row'))
+    .map(r => r.dataset.studentName);
+  eq(names, ['Ada'], 'only the Lincoln student');
+});
+
+// A former student's school would be an option that can never match anything here, since
+// this list is active-only. Offering it would just be a dead end.
+test('the school filter offers only the schools of active students', async () => {
+  const w = await loadApp();
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Ada', school: 'Lincoln Elementary' }));
+  const gone = w.SLP.model.student({ name: 'Gus', school: 'Jefferson Elementary' });
+  await w.SLP.store.saveStudent(gone);
+  await w.SLP.store.setStudentActive(gone.id, false);
+  const doc = await openStudents(w);
+  const opts = Array.from(doc.querySelectorAll('#student-school-filter option')).map(o => o.value);
+  eq(opts, ['', 'Lincoln Elementary'], 'the former student\'s school is not offered');
+});
+
+test('the filters and the search narrow together', async () => {
+  const w = await loadApp();
+  const at = (name, grade, school) =>
+    w.SLP.store.saveStudent(w.SLP.model.student({ name, grade, school }));
+  await at('Ada', '3', 'Lincoln Elementary');
+  await at('Abe', '7', 'Lincoln Elementary');
+  await at('Bo', '3', 'Lincoln Elementary');
+  await at('Ann', '3', 'Roosevelt Middle');
+  const doc = await openStudents(w);
+  // One control at a time, as she would: each change re-renders before the next.
+  setInput(doc.querySelector('#student-school-filter'), 'Lincoln Elementary');
+  await w.SLP.ui.render();
+  setInput(doc.querySelector('#student-grade-filter'), '3');
+  await w.SLP.ui.render();
+  setInput(doc.querySelector('#student-search'), 'a');
+  await w.SLP.ui.render();
+  const names = Array.from(doc.querySelectorAll('#student-list .student-row'))
+    .map(r => r.dataset.studentName);
+  eq(names, ['Ada'], 'name, grade and school all constrain');
+});
+
+test('clearing a filter restores the rest of the caseload', async () => {
+  const w = await loadApp();
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Ada', school: 'Lincoln Elementary' }));
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Bo', school: 'Roosevelt Middle' }));
+  const doc = await openStudents(w);
+  setInput(doc.querySelector('#student-school-filter'), 'Lincoln Elementary');
+  await w.SLP.ui.render();
+  setInput(doc.querySelector('#student-school-filter'), '');
+  await w.SLP.ui.render();
+  const names = Array.from(doc.querySelectorAll('#student-list .student-row'))
+    .map(r => r.dataset.studentName);
+  eq(names, ['Ada', 'Bo'], 'everyone is back');
+});
+
+// She can strand a filter from the Schedule tab: move the last student out of a school and
+// the option she is filtering by no longer exists. Left alone that reads as an empty
+// caseload beside a select showing nothing, with no obvious way back.
+test('a filter whose school no longer exists lets go', async () => {
+  const w = await loadApp();
+  const ada = w.SLP.model.student({ name: 'Ada', school: 'Lincoln Elementary' });
+  await w.SLP.store.saveStudent(ada);
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Bo', school: 'Roosevelt Middle' }));
+  const doc = await openStudents(w);
+  setInput(doc.querySelector('#student-school-filter'), 'Lincoln Elementary');
+  await w.SLP.ui.render();
+  await w.SLP.store.updateStudentDetails(ada.id, { school: 'Roosevelt Middle' });
+  await w.SLP.ui.render();
+  const names = Array.from(doc.querySelectorAll('#student-list .student-row'))
+    .map(r => r.dataset.studentName);
+  eq(names, ['Ada', 'Bo'], 'the caseload comes back rather than reading as empty');
+  eq(doc.querySelector('#student-school-filter').value, '', 'and the control agrees');
+});
+
 test('selecting a student opens their detail', async () => {
   const w = await loadApp();
   const ada = w.SLP.model.student({ name: 'Ada' });

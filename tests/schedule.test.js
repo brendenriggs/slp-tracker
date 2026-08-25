@@ -168,6 +168,16 @@ test('a school already on file is offered as an option', async () => {
      'Lincoln Elementary', 'her existing school is offered');
 });
 
+// Chrome draws no dropdown arrow on a datalist input until the mouse is over it, so at
+// rest the school box is indistinguishable from the free-text name box beside it. The
+// placeholder is the only thing that can say "this remembers your schools" at a glance.
+test('the school box says it can be picked, not only typed', async () => {
+  const w = await loadApp();
+  const doc = await openSchedule(w);
+  eq(doc.querySelector('#new-student-school').placeholder, 'School — pick or type',
+     'the empty add-student box advertises the list');
+});
+
 test('a school she types for the first time becomes an option afterwards', async () => {
   const w = await loadApp();
   const doc = await openSchedule(w);

@@ -156,7 +156,7 @@
 // SLP Session Tracker — one file, no build step, no network.
 // Sections below are ordered by dependency; each only uses those above it.
 // ============================================================
-window.SLP = { version: '0.1.0' };
+window.SLP = { version: '1.0.0' };
 
 // ============================================================
 // SECTION: db — IndexedDB access. Knows stores, not meaning.
@@ -1447,7 +1447,10 @@ SLP.ui = (() => {
       h('span', { id: 'charted-count', text: charted + ' of ' + total + ' charted' })));
 
     if (!plan.length) {
-      root.appendChild(h('p', { class: 'empty', text: 'Nothing scheduled for this day.' }));
+      const noSlots = (await SLP.store.listSlots()).length === 0;
+      root.appendChild(h('p', { class: 'empty', text: noSlots
+        ? 'No schedule yet. Open the Schedule tab to add students and their weekly slots.'
+        : 'Nothing scheduled for this day.' }));
       return;
     }
 

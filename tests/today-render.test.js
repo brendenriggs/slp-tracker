@@ -156,6 +156,13 @@ test('every student starts in the not-yet-charted state', async () => {
   assert(/not charted/i.test(chip.textContent), 'and it says so');
 });
 
+test('a brand-new file points her at the Schedule tab', async () => {
+  const w = await loadApp();
+  await w.SLP.ui.go({ tab: 'today', date: '2026-09-07' });
+  assert(/Schedule tab/.test(w.document.querySelector('#view-today').textContent),
+         'an empty app must not look broken');
+});
+
 test('browsing the day materialized nothing', async () => {
   const w = await loadApp();
   await seedDay(w);

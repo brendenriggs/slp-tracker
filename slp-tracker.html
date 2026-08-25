@@ -178,14 +178,16 @@
   button.danger { background: var(--danger); color: #fff; border: 1px solid var(--danger);
                   border-radius: 6px; padding: 6px 12px; font: inherit; cursor: pointer; }
   button.danger:disabled { opacity: 0.45; cursor: not-allowed; }
-  #restore-confirm { border: 1px solid var(--danger); border-radius: 6px;
+  #restore-confirm, #start-fresh-confirm {
+                     border: 1px solid var(--danger); border-radius: 6px;
                      padding: 12px 14px; margin-bottom: 10px; font-size: 13px;
                      background: #fffafa; }
   .confirm-title { font-weight: 600; font-size: 14px; margin: 0 0 8px; }
   .confirm-line { margin: 2px 0; font-variant-numeric: tabular-nums; }
   .confirm-note { margin: 8px 0 2px; color: var(--muted); }
   .confirm-warn { margin: 8px 0 2px; color: var(--danger); font-weight: 600; }
-  #restore-confirm-phrase { font: inherit; padding: 5px 8px; margin-top: 4px;
+  #restore-confirm-phrase, #start-fresh-phrase {
+                           font: inherit; padding: 5px 8px; margin-top: 4px;
                             border: 1px solid var(--danger); border-radius: 5px; }
   .confirm-actions { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
   #backup-nag { background: #fffaf0; border: 1px solid var(--warn); color: var(--warn);
@@ -952,6 +954,23 @@ SLP.backup = (() => {
     return applyBackup(parseBackup(text));
   }
 
+  // Emptying the app for a fresh year, or after a load of test data. Keeps meta for the
+  // same reason applyBackup does: the file handle is where her backups GO, not part of
+  // what she is clearing, and dropping it would silently stop backups on the very screen
+  // that just reassured her. lastBackupAt stays too — it remains a true statement about
+  // what is in that file, which is exactly the copy this clearing is safe because of.
+  async function startFresh() {
+    const keepMeta = await meta();
+    const cleared = {};
+    for (const store of db.STORES) {
+      if (store === 'meta') continue;
+      cleared[store] = (await db.getAll(store)).length;
+    }
+    await db.clearAll();
+    await db.put('meta', keepMeta);
+    return { cleared };
+  }
+
   // How long ago, in the units the question is actually asked in. Day granularity was
   // useless during the day it matters most: she backs up after first period and the line
   // still reads "today" — the same words as before she pressed it, so the button appears
@@ -988,7 +1007,7 @@ SLP.backup = (() => {
 
   const api = { exportObject, exportText, filename, download, hasFileApi, pickBackupFile,
                 writeToHandle, backupNow, parseBackup, applyBackup, restoreFromText,
-                status, sinceLabel, SCHEMA_VERSION };
+                startFresh, status, sinceLabel, SCHEMA_VERSION };
   return api;
 })();
 
@@ -2121,12 +2140,16 @@ SLP.ui = (() => {
   const { h, toast } = SLP.ui;
   const STALE_AFTER_DAYS = 3;
   const PHRASE = 'REPLACE EVERYTHING';
+  // A different word for a different act. She is not replacing anything here, and typing
+  // a phrase that misdescribes what is about to happen is worse than typing nothing.
+  const CLEAR_PHRASE = 'DELETE EVERYTHING';
 
   // render() rebuilds the DOM, so anything the bar remembers between renders has to
   // live out here — the same reason ui.aggregation keeps its date filter at module level.
   const ui = {
     moreOpen: false,        // the rarely-used controls: linking, changing, restoring
     pending: null,          // a parsed backup she has been shown but not yet agreed to
+    clearing: null,         // a start-fresh she has been shown but not yet agreed to
     typed: '',              // what she has typed into the confirmation box so far
   };
 
@@ -2166,13 +2189,17 @@ SLP.ui = (() => {
 
   // How much friction the replacement deserves, measured by what she would actually
   // lose: nothing at all, a copy that is safely on disk, or the only copy there is.
-  function atRisk() {
-    if (!ui.pending || ui.pending.current.students === 0) return 'none';
-    const s = ui.pending.status;
-    const safe = s.lastBackupAt !== null && s.staleDays < STALE_AFTER_DAYS;
+  // Shared by restore and start fresh, because the question is the same one — what is on
+  // disk — and it would be a bad joke if the two screens disagreed about whether she is safe.
+  function riskOf(current, status) {
+    if (current.students === 0) return 'none';
+    const safe = status.lastBackupAt !== null && status.staleDays < STALE_AFTER_DAYS;
     return safe ? 'copied' : 'only-copy';
   }
+  const atRisk = () => ui.pending ? riskOf(ui.pending.current, ui.pending.status) : 'none';
+  const clearRisk = () => ui.clearing ? riskOf(ui.clearing.current, ui.clearing.status) : 'none';
   const mayReplace = () => atRisk() !== 'only-copy' || ui.typed.trim() === PHRASE;
+  const mayClear = () => clearRisk() !== 'only-copy' || ui.typed.trim() === CLEAR_PHRASE;
 
   async function confirmRestore() {
     if (!ui.pending || !mayReplace()) return;
@@ -2191,6 +2218,44 @@ SLP.ui = (() => {
 
   async function cancelRestore() {
     ui.pending = null;
+    ui.typed = '';
+    await SLP.ui.render();
+  }
+
+  // Same shape as staging a restore: count what is at stake while it is all still there,
+  // then hand the decision back. A pending restore stands down — two confirmations
+  // stacked in the same place is exactly where a mis-click does the unrecoverable thing.
+  async function askStartFresh() {
+    ui.pending = null;
+    ui.typed = '';
+    ui.clearing = {
+      current: {
+        students: (await SLP.db.getAll('students')).length,
+        sessions: (await SLP.db.getAll('sessions')).length,
+      },
+      status: await SLP.backup.status(),
+    };
+    await SLP.ui.render();
+  }
+
+  async function confirmStartFresh() {
+    if (!ui.clearing || !mayClear()) return;
+    ui.clearing = null;
+    ui.typed = '';
+    try {
+      const { cleared } = await SLP.backup.startFresh();
+      const n = Object.values(cleared).reduce((a, b) => a + b, 0);
+      toast(n ? 'Cleared ' + n + ' records. The app is empty.' : 'The app was already empty.',
+            'ok');
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+    // Back to a clean slate rather than whatever student she happened to have open.
+    await SLP.ui.go({ tab: 'students', studentId: null });
+  }
+
+  async function cancelStartFresh() {
+    ui.clearing = null;
     ui.typed = '';
     await SLP.ui.render();
   }
@@ -2256,12 +2321,16 @@ SLP.ui = (() => {
                     'on:click': pickFile }),
       h('button', { class: 'plain', id: 'backup-restore', type: 'button',
                     text: 'Restore from a backup…', 'on:click': () => fileInput.click() }),
+      h('button', { class: 'plain danger-link', id: 'start-fresh', type: 'button',
+                    text: 'Start fresh…', 'on:click': askStartFresh }),
       h('span', { class: 'muted',
-                  text: 'Restoring replaces everything on this laptop.' })) : null;
+                  text: 'Restoring replaces everything on this laptop; ' +
+                        'starting fresh empties it.' })) : null;
 
     const els = [row];
     if (more) els.push(more);
     if (ui.pending) els.push(confirmPanel());
+    if (ui.clearing) els.push(clearPanel());
 
     const stale = status.lastBackupAt === null || status.staleDays >= STALE_AFTER_DAYS;
     if (hasData && stale) {
@@ -2329,7 +2398,60 @@ SLP.ui = (() => {
                       'aria-label': 'Confirm restore' }, ...rows);
   }
 
-  SLP.ui.backup = { bar, backupNow, restoreFromFile, pickFile, confirmRestore, cancelRestore };
+  // What is about to be erased, in her units, while it is all still there. The count is
+  // the check that catches the wrong moment: "49 students" reads very differently from
+  // the "3 students" of a test run she meant to throw away.
+  function clearPanel() {
+    const c = ui.clearing;
+    const risk = clearRisk();
+    const rows = [
+      h('p', { class: 'confirm-title', text: 'Empty this app and start fresh?' }),
+      h('p', { class: 'confirm-line',
+               text: 'This would erase ' + count(c.current.students, 'student') +
+                     ' and ' + count(c.current.sessions, 'session') +
+                     ', with all their goals, data and notes.' }),
+    ];
+
+    if (risk === 'none') {
+      rows.push(h('p', { class: 'confirm-note', text: 'There is nothing here to erase yet.' }));
+    } else if (risk === 'copied') {
+      rows.push(h('p', { class: 'confirm-note',
+                         text: 'Your work is backed up to ' +
+                               (c.status.fileName || 'your backup file') + ' ' +
+                               c.status.since + ', so you could get it back by restoring ' +
+                               'that file.' }));
+    }
+
+    const go = h('button', { class: 'danger', id: 'start-fresh-go', type: 'button',
+                             text: 'Erase everything', 'on:click': confirmStartFresh });
+
+    if (risk === 'only-copy') {
+      rows.push(h('p', { class: 'confirm-warn',
+                         text: 'This work has never been backed up. Erasing it cannot be ' +
+                               'undone — press Back up now first if you might want it.' }));
+      const box = h('input', { type: 'text', id: 'start-fresh-phrase', autocomplete: 'off',
+                               'aria-label': 'Type ' + CLEAR_PHRASE + ' to confirm',
+                               placeholder: CLEAR_PHRASE, value: ui.typed });
+      // Updated in place rather than through a re-render, so the caret and what she has
+      // already typed survive every keystroke.
+      box.addEventListener('input', () => {
+        ui.typed = box.value;
+        go.disabled = !mayClear();
+      });
+      rows.push(h('p', { class: 'confirm-note', text: 'Type ' + CLEAR_PHRASE + ' to continue:' }));
+      rows.push(box);
+    }
+
+    go.disabled = !mayClear();
+    rows.push(h('div', { class: 'confirm-actions' }, go,
+      h('button', { class: 'plain', id: 'start-fresh-cancel', type: 'button',
+                    text: 'Cancel', 'on:click': cancelStartFresh })));
+    return h('div', { id: 'start-fresh-confirm', role: 'group',
+                      'aria-label': 'Confirm starting fresh' }, ...rows);
+  }
+
+  SLP.ui.backup = { bar, backupNow, restoreFromFile, pickFile, confirmRestore, cancelRestore,
+                    askStartFresh, confirmStartFresh, cancelStartFresh };
 })();
 
 // ============================================================

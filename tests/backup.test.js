@@ -168,6 +168,44 @@ test('parseBackup refuses a file that is not an SLP backup', async () => {
 });
 
 // ---------------------------------------------------------------------------
+// Starting fresh. Clearing the app used to mean opening DevTools and deleting an
+// IndexedDB by hand, which is not a thing to ask of someone who is not a developer.
+// ---------------------------------------------------------------------------
+
+test('startFresh empties every store that holds her work', async () => {
+  const w = await loadApp();
+  assert(typeof w.SLP.backup.startFresh === 'function', 'startFresh exists');
+  await seedForBackup(w);
+  await w.SLP.backup.startFresh();
+  for (const store of w.SLP.db.STORES) {
+    if (store === 'meta') continue;
+    eq((await w.SLP.db.getAll(store)).length, 0, store + ' is empty');
+  }
+});
+
+// The handle is where her backups go, not part of what she is clearing. Losing it
+// would silently stop backups on the very screen that just told her she is safe.
+test('startFresh keeps the linked backup file', async () => {
+  const w = await loadApp();
+  await seedForBackup(w);
+  const stamp = new Date().toISOString();
+  await w.SLP.db.put('meta', { id: 'meta', schemaVersion: 1, lastBackupAt: stamp,
+                               backupFileHandle: { name: 'speech-backup.json' } });
+  await w.SLP.backup.startFresh();
+  const status = await w.SLP.backup.status();
+  eq(status.fileName, 'speech-backup.json', 'still linked');
+  eq(status.lastBackupAt, stamp, 'and the file really does hold what it held');
+});
+
+test('startFresh reports what it cleared', async () => {
+  const w = await loadApp();
+  await seedForBackup(w);
+  const { cleared } = await w.SLP.backup.startFresh();
+  eq(cleared.students, 1, 'counted the student');
+  assert(cleared.sessions >= 1, 'and the session');
+});
+
+// ---------------------------------------------------------------------------
 // How long since the last save. Day granularity was useless during the day it
 // mattered most: back up after first period, and the bar still read "today" —
 // the same words it read before she pressed it, so the button gave no feedback

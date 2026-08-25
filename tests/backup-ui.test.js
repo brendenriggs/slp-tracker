@@ -203,3 +203,156 @@ test('backup now falls back to a download when no file is linked', async () => {
   await w.SLP.ui.backup.backupNow();
   eq(downloaded, 'yes', 'the fallback carries the load when the API path is unavailable');
 });
+
+// ---------------------------------------------------------------------------
+// Start fresh. Emptying the app was a DevTools job — open the console, delete an
+// IndexedDB by name — which is not a thing to ask of someone who is not a developer.
+// It is guarded exactly like restore, and for the same reason: what makes it safe is
+// not how hard the button is to press, but whether a copy exists on disk first.
+// ---------------------------------------------------------------------------
+
+async function openMore(w) {
+  w.document.querySelector('#backup-more').click();
+  await w.SLP.ui.render();
+  return w.document;
+}
+
+// click() discards the handler's promise, so there is nothing to await for a button
+// whose work is asynchronous. Draining the render loop once is not enough — startFresh
+// counts every store before it clears, and each count is another turn. Settle on the
+// condition itself rather than on a guessed number of renders.
+async function settle(w, predicate, what) {
+  for (let i = 0; i < 20; i++) {
+    if (await predicate()) return;
+    await w.SLP.ui.render();
+  }
+  throw new Error('timed out waiting for ' + what);
+}
+const backedUpToday = (w, name) => w.SLP.db.put('meta',
+  { id: 'meta', schemaVersion: 1, lastBackupAt: new Date().toISOString(),
+    backupFileHandle: name ? { name } : null });
+
+test('start fresh stays behind More with the other rare controls', async () => {
+  const w = await loadApp();
+  eq(w.document.querySelector('#start-fresh'), null, 'not sitting on the bar');
+  const doc = await openMore(w);
+  assert(doc.querySelector('#start-fresh'), 'it appears with restore');
+});
+
+test('start fresh clears nothing until it is confirmed', async () => {
+  const w = await loadApp();
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Ada' }));
+  await backedUpToday(w, 'speech-backup.json');
+  const doc = await openMore(w);
+  doc.querySelector('#start-fresh').click();
+  await w.SLP.ui.render();
+  eq((await w.SLP.store.listStudents({})).length, 1, 'her student is still there');
+  assert(doc.querySelector('#start-fresh-confirm'), 'and she is being asked');
+});
+
+test('the confirmation counts what would be erased', async () => {
+  const w = await loadApp();
+  for (const n of ['Ada', 'Bo']) await w.SLP.store.saveStudent(w.SLP.model.student({ name: n }));
+  await backedUpToday(w, 'speech-backup.json');
+  const doc = await openMore(w);
+  doc.querySelector('#start-fresh').click();
+  await w.SLP.ui.render();
+  const text = doc.querySelector('#start-fresh-confirm').textContent;
+  assert(/2 students/.test(text), 'names the number at stake — got: ' + text);
+});
+
+test('backing out of start fresh leaves the data alone', async () => {
+  const w = await loadApp();
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Ada' }));
+  await backedUpToday(w, 'speech-backup.json');
+  const doc = await openMore(w);
+  doc.querySelector('#start-fresh').click();
+  await w.SLP.ui.render();
+  doc.querySelector('#start-fresh-cancel').click();
+  await w.SLP.ui.render();
+  eq((await w.SLP.store.listStudents({})).length, 1, 'still there');
+  eq(doc.querySelector('#start-fresh-confirm'), null, 'and the panel is gone');
+});
+
+test('confirming start fresh empties the app', async () => {
+  const w = await loadApp();
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Ada' }));
+  await backedUpToday(w, 'speech-backup.json');
+  const doc = await openMore(w);
+  doc.querySelector('#start-fresh').click();
+  await w.SLP.ui.render();
+  doc.querySelector('#start-fresh-go').click();
+  await settle(w, async () => (await w.SLP.store.listStudents({})).length === 0,
+               'the app to empty');
+  eq((await w.SLP.store.listStudents({})).length, 0, 'empty');
+  eq((await w.SLP.backup.status()).fileName, 'speech-backup.json', 'but still linked');
+  eq(doc.querySelector('#start-fresh-confirm'), null, 'and the panel is gone');
+});
+
+// The gate is about what is on disk, not about how scary the button is.
+test('data backed up today is cleared without making her type', async () => {
+  const w = await loadApp();
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Ada' }));
+  await backedUpToday(w, 'speech-backup.json');
+  const doc = await openMore(w);
+  doc.querySelector('#start-fresh').click();
+  await w.SLP.ui.render();
+  eq(doc.querySelector('#start-fresh-phrase'), null, 'a copy is safe on disk');
+  eq(doc.querySelector('#start-fresh-go').disabled, false, 'so the button is live');
+});
+
+test('erasing work that was never backed up demands the typed phrase', async () => {
+  const w = await loadApp();
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Ada' }));
+  const doc = await openMore(w);
+  doc.querySelector('#start-fresh').click();
+  await w.SLP.ui.render();
+  const box = doc.querySelector('#start-fresh-phrase');
+  assert(box, 'the heavy gate is up');
+  eq(doc.querySelector('#start-fresh-go').disabled, true, 'and the button is held shut');
+  box.value = 'DELETE EVERYTHING';
+  box.dispatchEvent(new w.Event('input', { bubbles: true }));
+  eq(doc.querySelector('#start-fresh-go').disabled, false, 'typing it opens the gate');
+});
+
+test('a half-typed phrase does not unlock start fresh', async () => {
+  const w = await loadApp();
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Ada' }));
+  const doc = await openMore(w);
+  doc.querySelector('#start-fresh').click();
+  await w.SLP.ui.render();
+  const box = doc.querySelector('#start-fresh-phrase');
+  box.value = 'DELETE EVERY';
+  box.dispatchEvent(new w.Event('input', { bubbles: true }));
+  eq(doc.querySelector('#start-fresh-go').disabled, true, 'still shut');
+});
+
+// Nothing to lose is not the same as nothing to think about, but it is close
+// enough that a typed phrase would be friction for its own sake.
+test('an already-empty app is cleared without ceremony', async () => {
+  const w = await loadApp();
+  const doc = await openMore(w);
+  doc.querySelector('#start-fresh').click();
+  await w.SLP.ui.render();
+  eq(doc.querySelector('#start-fresh-phrase'), null, 'nothing to lose');
+  const text = doc.querySelector('#start-fresh-confirm').textContent;
+  assert(/nothing/i.test(text), 'and it says so — got: ' + text);
+});
+
+// Restore and start fresh both own the pane below the bar; two confirmations
+// stacked there would be a genuinely dangerous thing to mis-click between.
+test('opening start fresh puts away a pending restore', async () => {
+  const w = await loadApp();
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Ada' }));
+  await backedUpToday(w, 'speech-backup.json');
+  const text = JSON.stringify({ schemaVersion: 1, exportedAt: new Date().toISOString(),
+    data: { students: [], goals: [], objectives: [], slots: [], sessions: [],
+            datapoints: [], attendance: [], notes: [], meta: [] } });
+  await w.SLP.ui.backup.restoreFromFile(new w.File([text], 'b.json'));
+  assert(w.document.querySelector('#restore-confirm'), 'a restore is pending');
+  const doc = await openMore(w);
+  doc.querySelector('#start-fresh').click();
+  await w.SLP.ui.render();
+  eq(doc.querySelector('#restore-confirm'), null, 'the restore stood down');
+  assert(doc.querySelector('#start-fresh-confirm'), 'and start fresh has the pane');
+});

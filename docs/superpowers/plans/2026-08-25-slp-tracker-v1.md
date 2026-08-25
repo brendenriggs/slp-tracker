@@ -4844,7 +4844,12 @@ git add slp-tracker.html tests/today-render.test.js
 git commit -m "feat: first-run hint; v1.0.0"
 ```
 
-- [ ] **Step 5: Drive a real day by hand**
+- [~] **Step 5: Drive a real day by hand** — **DEFERRED 2026-08-25, not done.**
+
+> Brenden's call: cleared off the open list to make room for other work, to be raised
+> again only if it turns out to matter. Recorded as deferred rather than passed because
+> nobody has driven it — the properties below are still unverified. Do not read the empty
+> checkbox as evidence either way.
 
 Open `slp-tracker.html` by double-clicking it. Do **not** use the test harness for this.
 

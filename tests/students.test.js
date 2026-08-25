@@ -336,3 +336,292 @@ test('the student heading drops the grade when there is none', async () => {
   const doc = await openStudents(w, ada.id);
   eq(doc.querySelector('h2').textContent, 'Ada', 'no dangling separator');
 });
+
+// ===========================================================================
+// Caseload management, merged in from the Schedule tab. Two tabs each showing
+// a filtered list of the same students was one list too many: which one you
+// opened depended on whether you wanted to read a goal or fix a grade, and
+// nothing on screen said so. Adding, editing and removing now live with the
+// students they act on, and the Schedule tab is just the schedule.
+// ===========================================================================
+
+async function seed(w, name, grade, school) {
+  const s = w.SLP.model.student({ name, grade, school });
+  await w.SLP.store.saveStudent(s);
+  return s;
+}
+const listNames = doc => Array.from(doc.querySelectorAll('#student-list .student-row'))
+  .map(r => r.dataset.studentName);
+
+// --- adding ----------------------------------------------------------------
+
+// Adding is start-of-year work, so it stays one button until asked for. The
+// button sits under the filters rather than below the list: at 49 students the
+// bottom of the list is a scroll away, and she should not have to hunt for it.
+test('the add-student button sits under the filters, not below the list', async () => {
+  const w = await loadApp();
+  await seed(w, 'Ada', '3', 'Lincoln Elementary');
+  const doc = await openStudents(w);
+  const button = doc.querySelector('#add-student-toggle');
+  assert(button, 'the button exists');
+  const filters = doc.querySelector('.student-filters');
+  const list = doc.querySelector('#student-list');
+  // Document order, not pixels: filters, then the button, then the list.
+  assert(filters.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING,
+         'it comes after the filters');
+  assert(button.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING,
+         'and before the list');
+});
+
+test('the add form stays shut until she asks for it', async () => {
+  const w = await loadApp();
+  const doc = await openStudents(w);
+  eq(doc.querySelector('#new-student-name'), null, 'no form yet');
+  doc.querySelector('#add-student-toggle').click();
+  await w.SLP.ui.render();
+  assert(doc.querySelector('#new-student-name'), 'and there it is');
+});
+
+test('adding a student puts them on the list', async () => {
+  const w = await loadApp();
+  const doc = await openStudents(w);
+  doc.querySelector('#add-student-toggle').click();
+  await w.SLP.ui.render();
+  setInput(doc.querySelector('#new-student-name'), 'Ada Byron');
+  setInput(doc.querySelector('#new-student-grade'), '3');
+  doc.querySelector('#add-student').click();
+  await w.SLP.ui.render();
+  eq(listNames(doc), ['Ada Byron'], 'listed');
+  eq((await w.SLP.store.listStudents({})).length, 1, 'and saved');
+});
+
+test('adding a student with a blank name is refused', async () => {
+  const w = await loadApp();
+  const doc = await openStudents(w);
+  doc.querySelector('#add-student-toggle').click();
+  await w.SLP.ui.render();
+  setInput(doc.querySelector('#new-student-name'), '   ');
+  doc.querySelector('#add-student').click();
+  await w.SLP.ui.render();
+  eq((await w.SLP.store.listStudents({})).length, 0, 'nothing saved');
+});
+
+test('backing out of adding leaves no student and no form', async () => {
+  const w = await loadApp();
+  const doc = await openStudents(w);
+  doc.querySelector('#add-student-toggle').click();
+  await w.SLP.ui.render();
+  setInput(doc.querySelector('#new-student-name'), 'Ada');
+  doc.querySelector('#cancel-add-student').click();
+  await w.SLP.ui.render();
+  eq(doc.querySelector('#new-student-name'), null, 'the form is gone');
+  eq((await w.SLP.store.listStudents({})).length, 0, 'and nobody was added');
+});
+
+// The form and a student's goals compete for the same pane, so opening one
+// must close the other rather than leaving her looking at a stale form.
+test('picking a student closes the add form', async () => {
+  const w = await loadApp();
+  const ada = await seed(w, 'Ada', '3', '');
+  const doc = await openStudents(w);
+  doc.querySelector('#add-student-toggle').click();
+  await w.SLP.ui.render();
+  doc.querySelector('.student-row[data-student-id="' + ada.id + '"] .open-student').click();
+  await w.SLP.ui.render();
+  eq(doc.querySelector('#new-student-name'), null, 'the form gave way');
+  assert(doc.querySelector('#student-detail'), 'and her goals are showing');
+});
+
+test('the grade field offers Pre-K through 12th instead of an empty box', async () => {
+  const w = await loadApp();
+  const doc = await openStudents(w);
+  doc.querySelector('#add-student-toggle').click();
+  await w.SLP.ui.render();
+  const values = Array.from(doc.querySelectorAll('#new-student-grade option')).map(o => o.value);
+  eq(values[0], '', 'grade stays optional');
+  assert(values.includes('PK') && values.includes('12'), 'Pre-K through 12th');
+});
+
+test('a school already on file is offered as an option', async () => {
+  const w = await loadApp();
+  await seed(w, 'Ada', '', 'Lincoln Elementary');
+  const doc = await openStudents(w);
+  doc.querySelector('#add-student-toggle').click();
+  await w.SLP.ui.render();
+  const listId = doc.querySelector('#new-student-school').getAttribute('list');
+  const opts = Array.from(doc.querySelectorAll('#' + listId + ' option')).map(o => o.value);
+  assert(opts.includes('Lincoln Elementary'), 'offered rather than retyped');
+});
+
+test('the school box says it can be picked, not only typed', async () => {
+  const w = await loadApp();
+  const doc = await openStudents(w);
+  doc.querySelector('#add-student-toggle').click();
+  await w.SLP.ui.render();
+  eq(doc.querySelector('#new-student-school').placeholder, 'School — pick or type',
+     'the empty box advertises the list');
+});
+
+test('typing a known school in a different case does not fork the list', async () => {
+  const w = await loadApp();
+  await seed(w, 'Ada', '', 'Lincoln Elementary');
+  const doc = await openStudents(w);
+  doc.querySelector('#add-student-toggle').click();
+  await w.SLP.ui.render();
+  setInput(doc.querySelector('#new-student-name'), 'Bo Peep');
+  setInput(doc.querySelector('#new-student-school'), 'lincoln elementary');
+  doc.querySelector('#add-student').click();
+  await w.SLP.ui.render();
+  const schools = (await w.SLP.store.listStudents({})).map(s => s.school);
+  eq(schools.filter(s => /lincoln/i.test(s)), ['Lincoln Elementary', 'Lincoln Elementary'],
+     'one spelling, not two');
+});
+
+// --- the heading, and editing it -------------------------------------------
+
+test('the heading names the school after the grade', async () => {
+  const w = await loadApp();
+  const ada = await seed(w, 'Ada', '3', 'Lincoln Elementary');
+  const doc = await openStudents(w, ada.id);
+  eq(doc.querySelector('#student-detail h2').textContent, 'Ada · 3rd grade · Lincoln Elementary',
+     'name, grade, school');
+});
+
+test('a student with a school but no grade skips straight to the school', async () => {
+  const w = await loadApp();
+  const ada = await seed(w, 'Ada', '', 'Lincoln Elementary');
+  const doc = await openStudents(w, ada.id);
+  eq(doc.querySelector('#student-detail h2').textContent, 'Ada · Lincoln Elementary',
+     'no dangling separator');
+});
+
+test('the edit button sits with the heading it edits', async () => {
+  const w = await loadApp();
+  const ada = await seed(w, 'Ada', '3', 'Lincoln Elementary');
+  const doc = await openStudents(w, ada.id);
+  const button = doc.querySelector('#edit-student');
+  assert(button, 'the button exists');
+  assert(doc.querySelector('#student-detail').firstElementChild.contains(button),
+         'inside the heading row, not adrift further down');
+});
+
+test('a mistyped school can be corrected from the heading', async () => {
+  const w = await loadApp();
+  const ada = await seed(w, 'Ada', '3', 'Lincon Elementry');
+  const doc = await openStudents(w, ada.id);
+  doc.querySelector('#edit-student').click();
+  await w.SLP.ui.render();
+  setInput(doc.querySelector('#edit-student-school'), 'Lincoln Elementary');
+  setInput(doc.querySelector('#edit-student-grade'), '4');
+  doc.querySelector('#save-student').click();
+  await w.SLP.ui.render();
+  const saved = (await w.SLP.store.listStudents({}))[0];
+  eq(saved.school, 'Lincoln Elementary', 'school corrected');
+  eq(saved.grade, '4', 'grade corrected');
+  eq(doc.querySelector('#student-detail h2').textContent, 'Ada · 4th grade · Lincoln Elementary',
+     'and the heading re-reads');
+});
+
+test('backing out of an edit changes nothing', async () => {
+  const w = await loadApp();
+  const ada = await seed(w, 'Ada', '3', 'Lincoln Elementary');
+  const doc = await openStudents(w, ada.id);
+  doc.querySelector('#edit-student').click();
+  await w.SLP.ui.render();
+  setInput(doc.querySelector('#edit-student-school'), 'Somewhere Else');
+  doc.querySelector('#cancel-student-edit').click();
+  await w.SLP.ui.render();
+  eq((await w.SLP.store.listStudents({}))[0].school, 'Lincoln Elementary', 'untouched');
+  eq(doc.querySelector('#edit-student-school'), null, 'and the heading is back to reading');
+});
+
+test('a corrected school stops being offered once nobody uses it', async () => {
+  const w = await loadApp();
+  const ada = await seed(w, 'Ada', '', 'Lincon Elementry');
+  await seed(w, 'Bo', '', 'Roosevelt Middle');
+  await w.SLP.store.updateStudentDetails(ada.id, { school: 'Roosevelt Middle' });
+  const doc = await openStudents(w);
+  const opts = Array.from(doc.querySelectorAll('#student-school-filter option')).map(o => o.value);
+  eq(opts, ['', 'Roosevelt Middle'], 'the typo is gone from the list');
+});
+
+// --- removing --------------------------------------------------------------
+
+// Far down the pane, below the goals, so it is nowhere near anything she
+// presses often — and armed rather than immediate, the same two-step the
+// objective delete uses, so one stray click can never empty a caseload.
+test('remove from caseload is the last thing in the pane', async () => {
+  const w = await loadApp();
+  const ada = await seed(w, 'Ada', '3', 'Lincoln Elementary');
+  const doc = await openStudents(w, ada.id);
+  const button = doc.querySelector('#remove-student');
+  assert(button, 'the button exists');
+  const detail = doc.querySelector('#student-detail');
+  assert(detail.lastElementChild.contains(button), 'it is the last block in the pane');
+});
+
+test('removing a student needs the second click', async () => {
+  const w = await loadApp();
+  const ada = await seed(w, 'Ada', '3', 'Lincoln Elementary');
+  const doc = await openStudents(w, ada.id);
+  doc.querySelector('#remove-student').click();
+  await w.SLP.ui.render();
+  eq((await w.SLP.store.listStudents({ activeOnly: true })).length, 1, 'the first click only arms');
+  assert(/remove ada/i.test(doc.querySelector('#student-detail').textContent), 'and asks by name');
+  doc.querySelector('#confirm-remove-student').click();
+  await w.SLP.ui.render();
+  eq((await w.SLP.store.listStudents({ activeOnly: true })).length, 0, 'off the caseload');
+  eq((await w.SLP.store.listStudents({})).length, 1, 'but the record is kept');
+});
+
+test('backing out of a removal keeps the student', async () => {
+  const w = await loadApp();
+  const ada = await seed(w, 'Ada', '3', 'Lincoln Elementary');
+  const doc = await openStudents(w, ada.id);
+  doc.querySelector('#remove-student').click();
+  await w.SLP.ui.render();
+  doc.querySelector('#cancel-remove-student').click();
+  await w.SLP.ui.render();
+  eq((await w.SLP.store.listStudents({ activeOnly: true })).length, 1, 'still on the caseload');
+  assert(doc.querySelector('#remove-student'), 'and the button is back to resting');
+});
+
+// Arming one student and opening another must not leave the second student
+// showing a primed confirmation she never asked for.
+test('arming a removal does not follow her to the next student', async () => {
+  const w = await loadApp();
+  const ada = await seed(w, 'Ada', '3', '');
+  const bo = await seed(w, 'Bo', '4', '');
+  const doc = await openStudents(w, ada.id);
+  doc.querySelector('#remove-student').click();
+  await w.SLP.ui.render();
+  await w.SLP.ui.go({ studentId: bo.id });
+  assert(doc.querySelector('#remove-student'), 'Bo shows the resting button');
+  eq(doc.querySelector('#confirm-remove-student'), null, 'not a primed one');
+});
+
+// --- former students -------------------------------------------------------
+
+test('former students are counted under the list', async () => {
+  const w = await loadApp();
+  await seed(w, 'Ada', '', '');
+  const gone = await seed(w, 'Gus', '', '');
+  await w.SLP.store.setStudentActive(gone.id, false);
+  const doc = await openStudents(w);
+  const note = doc.querySelector('#inactive-note');
+  assert(note, 'the note is there');
+  assert(/1 former student/.test(note.textContent), 'and counts them');
+  eq(listNames(doc), ['Ada'], 'without listing them');
+});
+
+// --- the schedule tab is now just the schedule -----------------------------
+
+test('the schedule tab no longer carries the caseload', async () => {
+  const w = await loadApp();
+  await seed(w, 'Ada', '3', 'Lincoln Elementary');
+  await w.SLP.ui.go({ tab: 'schedule' });
+  const doc = w.document;
+  eq(doc.querySelector('#caseload-editor'), null, 'no caseload panel');
+  eq(doc.querySelector('#add-student'), null, 'no add form');
+  assert(doc.querySelector('#week-grid'), 'the week grid is what is there');
+});

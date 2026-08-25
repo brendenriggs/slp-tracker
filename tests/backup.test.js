@@ -166,3 +166,61 @@ test('parseBackup refuses a file that is not an SLP backup', async () => {
   assert(/SLP Session Tracker backup|schema version/i.test(e.message),
          'named for what is wrong with it — got: ' + e.message);
 });
+
+// ---------------------------------------------------------------------------
+// How long since the last save. Day granularity was useless during the day it
+// mattered most: back up after first period, and the bar still read "today" —
+// the same words it read before she pressed it, so the button gave no feedback
+// that it had worked. Minutes and hours are what a school day is measured in.
+// ---------------------------------------------------------------------------
+
+const AT = (w, iso, nowIso) => w.SLP.backup.sinceLabel(iso, new Date(nowIso));
+const NOW = '2026-08-25T14:00:00';
+
+test('sinceLabel says so plainly when there is no backup at all', async () => {
+  const w = await loadApp();
+  assert(typeof w.SLP.backup.sinceLabel === 'function', 'sinceLabel exists');
+  eq(AT(w, null, NOW), 'never backed up', 'not "0 minutes ago"');
+});
+
+// The point of the whole change: pressing the button must visibly change the line.
+test('sinceLabel reads as just now immediately after a backup', async () => {
+  const w = await loadApp();
+  eq(AT(w, '2026-08-25T14:00:00', NOW), 'just now', 'at the same instant');
+  eq(AT(w, '2026-08-25T13:59:30', NOW), 'just now', 'and half a minute later');
+});
+
+test('sinceLabel counts minutes within the hour', async () => {
+  const w = await loadApp();
+  eq(AT(w, '2026-08-25T13:59:00', NOW), '1 minute ago', 'singular at one');
+  eq(AT(w, '2026-08-25T13:48:00', NOW), '12 minutes ago', 'plural after');
+  eq(AT(w, '2026-08-25T13:01:00', NOW), '59 minutes ago', 'right up to the hour');
+});
+
+test('sinceLabel counts hours within the day', async () => {
+  const w = await loadApp();
+  eq(AT(w, '2026-08-25T13:00:00', NOW), '1 hour ago', 'singular at one');
+  eq(AT(w, '2026-08-25T08:00:00', NOW), '6 hours ago', 'across a morning');
+  eq(AT(w, '2026-08-24T15:00:00', NOW), '23 hours ago', 'right up to the day');
+});
+
+test('sinceLabel counts days past that', async () => {
+  const w = await loadApp();
+  eq(AT(w, '2026-08-24T14:00:00', NOW), 'yesterday', 'a day gets a word, not a number');
+  eq(AT(w, '2026-08-22T14:00:00', NOW), '3 days ago', 'and then days');
+});
+
+// A clock that has been set back, or a file restored from a machine an hour ahead,
+// must not produce "in 40 minutes" on a line about the past.
+test('sinceLabel does not go backwards when the clock disagrees', async () => {
+  const w = await loadApp();
+  eq(AT(w, '2026-08-25T14:40:00', NOW), 'just now', 'a future stamp reads as just now');
+});
+
+test('the status line carries the fine-grained time, not the day count', async () => {
+  const w = await loadApp();
+  await w.SLP.db.put('meta', { id: 'meta', schemaVersion: 1, backupFileHandle: null,
+                               lastBackupAt: new Date(Date.now() - 12 * 60000).toISOString() });
+  const status = await w.SLP.backup.status();
+  eq(status.since, '12 minutes ago', 'status reports it so the bar can show it');
+});

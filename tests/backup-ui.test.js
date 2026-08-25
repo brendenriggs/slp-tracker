@@ -53,6 +53,20 @@ test('the status line names the linked file once one is chosen', async () => {
          'she can see exactly which file she is trusting');
 });
 
+// The button and the time it last worked belong on the same line: pressing Back up now
+// should visibly change the words beside it, which "today" never did.
+test('the bar shows how long ago it saved, beside the button', async () => {
+  const w = await loadApp();
+  await w.SLP.db.put('meta', { id: 'meta', schemaVersion: 1,
+                               lastBackupAt: new Date(Date.now() - 12 * 60000).toISOString(),
+                               backupFileHandle: { name: 'speech-backup.json' } });
+  await w.SLP.ui.render();
+  const bar = w.document.querySelector('#backup-bar');
+  assert(/12 minutes ago/.test(bar.textContent),
+         'minutes, not a day count — got: ' + bar.textContent);
+  assert(bar.contains(w.document.querySelector('#backup-now')), 'on the same line as the button');
+});
+
 test('the rarely used controls stay tucked away until More is opened', async () => {
   const w = await loadApp();
   assert(!w.document.querySelector('#backup-restore'), 'restore is not sitting on the bar');

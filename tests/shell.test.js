@@ -89,30 +89,36 @@ async function seedTwoSchools(w) {
   await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Bo', school: 'Lincoln Elementary' }));
 }
 
-test('the school filter min-width rule reaches both lists, not just the students tab', async () => {
+test('the school filter carries the rule that keeps it inside its column', async () => {
   const w = await loadApp();
   await seedTwoSchools(w);
-  for (const [tab, id] of [['students', '#student-school-filter'],
-                           ['schedule', '#caseload-school-filter']]) {
-    await w.SLP.ui.go({ tab });
-    const el = w.document.querySelector(id);
-    assert(el, id + ' exists on the ' + tab + ' tab');
-    eq(w.getComputedStyle(el).minWidth, '0px', 'min-width:0 applies to ' + id);
-  }
+  await w.SLP.ui.go({ tab: 'students' });
+  const el = w.document.querySelector('#student-school-filter');
+  assert(el, 'the filter exists');
+  const style = w.getComputedStyle(el);
+  eq(style.minWidth, '0px', 'min-width:0 applies');
+  // Class-scoped, so it survives the id changing or a second list appearing. Asserting
+  // the class is here is what stops the rule quietly reverting to protecting one instance.
+  assert(el.classList.contains('school-filter'), 'and hangs off the shared class');
 });
+
+// No overflow test for the edit row: measured 2026-08-25, the heading, grade select,
+// school box and buttons cannot outrun the detail pane, because flex items shrink by
+// default and the h2's text wraps inside itself. A test there would never go red, which
+// is worse than no test — it reads as a guard and guards nothing. flex-wrap: wrap is
+// still preferred over nowrap: with wrap the long name keeps its line and the controls
+// drop below it (h2 663px); with nowrap the name is squeezed to 288px instead.
 
 test('a long school name does not push the filter out of its column', async () => {
   const w = await loadApp();
   await seedTwoSchools(w);
-  for (const [tab, id] of [['students', '#student-school-filter'],
-                           ['schedule', '#caseload-school-filter']]) {
-    await w.SLP.ui.go({ tab });
-    const el = w.document.querySelector(id);
-    const box = el.getBoundingClientRect();
-    const container = el.closest('.student-filters').getBoundingClientRect();
-    assert(box.width > 0, id + ' is actually laid out');
-    // 1px of tolerance for sub-pixel rounding; anything real is tens of pixels.
-    assert(box.right <= container.right + 1,
-           id + ' overflows its container by ' + (box.right - container.right) + 'px');
-  }
+  await w.SLP.ui.go({ tab: 'students' });
+  const el = w.document.querySelector('#student-school-filter');
+  const box = el.getBoundingClientRect();
+  const container = el.closest('.student-filters').getBoundingClientRect();
+  assert(box.width > 0, 'the filter is actually laid out');
+  // 1px of tolerance for sub-pixel rounding; a real overflow is tens of pixels — with
+  // both sizing properties removed this measures ~276px over.
+  assert(box.right <= container.right + 1,
+         'overflows its container by ' + (box.right - container.right) + 'px');
 });

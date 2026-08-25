@@ -80,6 +80,15 @@
   /* Search and grade share a row; the school select takes its own so long school names
      stay readable — a truncated one can't be told apart from a near-identical typo. */
   .student-filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  /* Full width so it reads as an action on the list below it, not a third filter. */
+  #add-student-toggle { width: 100%; margin-bottom: 8px; text-align: left; }
+  /* The heading and its Edit button share a baseline; the controls wrap on a narrow pane
+     rather than pushing Save off the edge. */
+  .detail-heading { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .detail-heading h2 { margin: 0; }
+  /* Set apart from the goals above it: this is the one control in the pane that undoes
+     a year of setup, and it should not read as part of the last goal block. */
+  .remove-block { margin-top: 28px; border-top: 1px solid var(--line); }
   .student-filters .search-filter { flex: 1; min-width: 0; }
   /* Both min-width:0 and max-width:100% are here to stop the select claiming its longest
      option's width and overflowing the 250px column onto the detail pane. Measured 2026-08-25:
@@ -190,7 +199,7 @@
 // SLP Session Tracker — one file, no build step, no network.
 // Sections below are ordered by dependency; each only uses those above it.
 // ============================================================
-window.SLP = { version: '1.2.0' };
+window.SLP = { version: '1.3.0' };
 
 // ============================================================
 // SECTION: db — IndexedDB access. Knows stores, not meaning.
@@ -943,6 +952,25 @@ SLP.backup = (() => {
     return applyBackup(parseBackup(text));
   }
 
+  // How long ago, in the units the question is actually asked in. Day granularity was
+  // useless during the day it matters most: she backs up after first period and the line
+  // still reads "today" — the same words as before she pressed it, so the button appears
+  // to have done nothing. A school day is measured in minutes and hours.
+  function sinceLabel(iso, now = new Date()) {
+    if (!iso) return 'never backed up';
+    const secs = (now.getTime() - new Date(iso).getTime()) / 1000;
+    // A restored file from a machine an hour ahead, or a clock set back, must not produce
+    // "in 40 minutes" on a line about the past. The recent end is the honest place to land.
+    if (secs < 60) return 'just now';
+    const plural = (n, word) => n + ' ' + word + (n === 1 ? '' : 's') + ' ago';
+    const mins = Math.floor(secs / 60);
+    if (mins < 60) return plural(mins, 'minute');
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return plural(hours, 'hour');
+    const days = Math.floor(hours / 24);
+    return days === 1 ? 'yesterday' : plural(days, 'day');
+  }
+
   async function status() {
     const meta_ = await meta();
     const staleDays = meta_.lastBackupAt
@@ -952,12 +980,15 @@ SLP.backup = (() => {
              // Naming the file is what turns "a backup exists somewhere" into something
              // she can actually go and look at.
              fileName: (meta_.backupFileHandle && meta_.backupFileHandle.name) || null,
+             // staleDays still drives the nag, which is a threshold question ("has it been
+             // too long"); since is the human answer to "when".
+             since: sinceLabel(meta_.lastBackupAt),
              staleDays };
   }
 
   const api = { exportObject, exportText, filename, download, hasFileApi, pickBackupFile,
                 writeToHandle, backupNow, parseBackup, applyBackup, restoreFromText,
-                status, SCHEMA_VERSION };
+                status, sinceLabel, SCHEMA_VERSION };
   return api;
 })();
 
@@ -1086,13 +1117,14 @@ SLP.ui = (() => {
       }));
   }
 
-  // The one filtered student list. Both tabs narrow the same way — same search,
-  // same grade picker, same school select, composed the same — so they can never
-  // drift apart on what a filter means, the same argument gradeSelect above makes.
+  // Filtering for a list of students: derive the schools, release a filter whose school
+  // has gone, compose the three as AND, build the controls.
   //
-  // What this deliberately does NOT own is the state: each caller passes its own
-  // object in. That is what keeps the tabs independent — filtering the caseload
-  // down to one school must not empty the Students tab out from under her.
+  // It briefly had two callers — the caseload had its own list — and keeping the state
+  // outside is what kept those two independent. The caseload has since merged into the
+  // Students tab, so there is one caller again. Left parameterised rather than folded
+  // back in: this is the whole of "what filtering means" in one testable place, and the
+  // next list that needs it should not have to reinvent the released-school rule.
   function studentFilters({ idPrefix, state, students, onChange }) {
     // Derived from the students handed in, not from every record: a school nobody
     // in this particular list attends could never match, so offering it is a dead end.
@@ -1142,132 +1174,16 @@ SLP.ui = (() => {
 })();
 
 // ============================================================
-// SECTION: ui.schedule — caseload and the weekly template.
+// SECTION: ui.schedule — the weekly template.
 // The template is not history: editing it never rewrites a past session.
+// The caseload used to live here too; it moved to ui.students, where the
+// students it edits already were.
 // ============================================================
 (() => {
-  const { h, go, toast } = SLP.ui;
+  const { h, toast } = SLP.ui;      // go went with the caseload
   const DAYS = [[1, 'Monday'], [2, 'Tuesday'], [3, 'Wednesday'], [4, 'Thursday'], [5, 'Friday']];
 
-  // survives re-render within the tab. filters is this tab's own, deliberately not shared
-  // with the Students tab: narrowing the caseload to fix one school's grades must not
-  // quietly hide everyone else from the tab where she charts progress.
-  const draft = { studentIds: new Set(), editingId: null,
-                  filters: { search: '', gradeFilter: '', schoolFilter: '' } };
-
-  // Name, then whichever of grade and school she has filled in. Built by dropping the
-  // blanks rather than by appending, so a missing one never leaves a separator dangling.
-  const rowLabel = s => [s.name, s.grade ? SLP.model.gradeLabel(s.grade) : null, s.school || null]
-    .filter(Boolean).join(' · ');
-
-  // One school box built the same way wherever it appears, so the add form and the edit
-  // row can never drift apart on what a school is. The grade picker is SLP.ui.gradeSelect,
-  // shared with the students filter for the same reason.
-  const gradeSelect = (id, value) => SLP.ui.gradeSelect(id, value, 'Grade');
-
-  // A native datalist, not a hand-rolled combobox: she gets type-to-filter for free, and
-  // anything she types that is new is simply accepted. The trade is discoverability —
-  // Chrome gives the input no dropdown arrow at rest (see the placeholder below).
-  function schoolBox(id, listId, value, schools) {
-    return [
-      // Chrome only shows the datalist caret on hover, so the placeholder carries the
-      // "there is a list here" message that the control itself never gives her.
-      h('input', { type: 'text', id, list: listId, placeholder: 'School — pick or type',
-                   value: value || '', autocomplete: 'off' }),
-      h('datalist', { id: listId }, schools.map(name => h('option', { value: name }))),
-    ];
-  }
-
-  async function caseloadPanel() {
-    const students = await SLP.store.listStudents({});
-    const active = students.filter(s => s.active);
-    const schools = SLP.derive.schools(students);
-
-    // Filters over the active students only, so they match what the list actually shows.
-    const filters = SLP.ui.studentFilters({
-      idPrefix: 'caseload', state: draft.filters, students: active,
-      onChange: () => SLP.ui.render(),
-    });
-
-    const list = h('div', { id: 'caseload-list' });
-    if (!active.length) {
-      list.appendChild(h('p', { class: 'muted', text: 'No students on the caseload yet.' }));
-    } else if (!filters.shown.length) {
-      // Distinct from the message above on purpose: this one is undone by clearing a
-      // box, and saying so is what stops her reading it as a vanished caseload.
-      list.appendChild(h('p', { class: 'muted', text: 'No matching students.' }));
-    }
-    for (const s of filters.shown) {
-      const row = h('div', { class: 'student-row', 'data-student-id': s.id,
-                             'data-student-name': s.name });
-      if (draft.editingId === s.id) {
-        const grade = gradeSelect('edit-student-grade', s.grade);
-        const [school, schoolList] = schoolBox('edit-student-school', 'edit-school-options',
-                                               s.school, schools);
-        row.append(
-          h('span', { class: 'grow', text: s.name }), grade, school, schoolList,
-          h('button', {
-            class: 'primary', id: 'save-student', type: 'button', text: 'Save',
-            'on:click': async () => {
-              await SLP.store.updateStudentDetails(s.id, {
-                grade: grade.value,
-                school: SLP.derive.canonicalSchool(schools, school.value),
-              });
-              draft.editingId = null;
-              await SLP.ui.render();
-            },
-          }),
-          h('button', {
-            class: 'linkish', id: 'cancel-student-edit', type: 'button', text: 'Cancel',
-            'on:click': async () => { draft.editingId = null; await SLP.ui.render(); },
-          }));
-      } else {
-        row.append(
-          h('span', { class: 'grow', text: rowLabel(s) }),
-          h('button', {
-            class: 'linkish edit-student', type: 'button', text: 'Edit',
-            'on:click': async () => { draft.editingId = s.id; await SLP.ui.render(); },
-          }),
-          h('button', {
-            class: 'linkish toggle-active', type: 'button', text: 'Remove from caseload',
-            'on:click': async () => {
-              await SLP.store.setStudentActive(s.id, false);
-              toast(s.name + ' removed from the caseload. Their history is kept.', 'ok');
-              await SLP.ui.render();
-            },
-          }));
-      }
-      list.appendChild(row);
-    }
-    const inactive = students.filter(s => !s.active);
-    if (inactive.length) {
-      list.appendChild(h('p', { class: 'muted', id: 'inactive-note',
-        text: inactive.length + ' former student' + (inactive.length > 1 ? 's' : '') +
-              ' kept for their history.' }));
-    }
-
-    const name = h('input', { type: 'text', id: 'new-student-name', placeholder: 'Student name' });
-    const grade = gradeSelect('new-student-grade', '');
-    const [school, schoolList] = schoolBox('new-student-school', 'school-options', '', schools);
-
-    return h('section', { class: 'panel', id: 'caseload-editor' },
-      h('h2', { text: 'Caseload' }),
-      filters.el,
-      list,
-      h('div', { class: 'row-form', style: 'margin-top:10px' },
-        name, grade, school, schoolList,
-        h('button', {
-          class: 'primary', id: 'add-student', type: 'button', text: 'Add student',
-          'on:click': async () => {
-            if (!name.value.trim()) { toast('A student needs a name.', 'warn'); return; }
-            await SLP.store.saveStudent(SLP.model.student({
-              name: name.value.trim(), grade: grade.value,
-              school: SLP.derive.canonicalSchool(schools, school.value),
-            }));
-            await SLP.ui.render();
-          },
-        })));
-  }
+  const draft = { studentIds: new Set() };   // survives re-render within the tab
 
   async function slotForm(students) {
     const day = h('select', { id: 'slot-day' },
@@ -1338,20 +1254,47 @@ SLP.ui = (() => {
 
   SLP.ui.views.schedule = async (root) => {
     const students = await SLP.store.listStudents({ activeOnly: true });
-    root.appendChild(await caseloadPanel());
+    // The week comes first. It used to sit below the caseload, which at 49 students meant
+    // scrolling past the whole roster to reach the thing the tab is named after.
     root.appendChild(await weekGrid(await SLP.store.listStudents({})));
     root.appendChild(await slotForm(students));
   };
 })();
 
 // ============================================================
-// SECTION: ui.students — goals, objectives, field definitions.
+// SECTION: ui.students — the caseload: who is on it, and their goals.
 // Task 12 adds history and charts to renderDetail().
 // ============================================================
 (() => {
   const { h, toast } = SLP.ui;
   const m = SLP.model;
-  const ui = { search: '', gradeFilter: '', schoolFilter: '', armedDelete: null };
+  // adding, editing and removing are all "which one thing is open" flags rather than
+  // stored form values: render() rebuilds the DOM, and a half-typed name that survived
+  // a re-render would be a promise this app cannot keep.
+  // editing and removing hold a student id rather than a flag, so that opening a
+  // different student cannot inherit a state she armed on the previous one.
+  const ui = { search: '', gradeFilter: '', schoolFilter: '', armedDelete: null,
+               adding: false, editing: null, removing: null };
+
+  // Name, then whichever of grade and school she has filled in. Built by dropping the
+  // blanks rather than by appending, so a missing one never leaves a separator dangling.
+  const rowLabel = s => [s.name, s.grade ? m.gradeLabel(s.grade) : null, s.school || null]
+    .filter(Boolean).join(' · ');
+
+  const gradeSelect = (id, value) => SLP.ui.gradeSelect(id, value, 'Grade');
+
+  // A native datalist, not a hand-rolled combobox: she gets type-to-filter for free, and
+  // anything she types that is new is simply accepted. The trade is discoverability —
+  // Chrome gives the input no dropdown arrow at rest (see the placeholder below).
+  function schoolBox(id, listId, value, schools) {
+    return [
+      // Chrome only shows the datalist caret on hover, so the placeholder carries the
+      // "there is a list here" message that the control itself never gives her.
+      h('input', { type: 'text', id, list: listId, placeholder: 'School — pick or type',
+                   value: value || '', autocomplete: 'off' }),
+      h('datalist', { id: listId }, schools.map(name => h('option', { value: name }))),
+    ];
+  }
 
   // Exported: Task 10 reuses this for ad hoc objective tweaks.
   function fieldEditor(objective, onChange) {
@@ -1497,11 +1440,74 @@ SLP.ui = (() => {
         })));
   }
 
-  async function renderDetail(container, student) {
+  // The heading is also the roster row: it is the one place her name, grade and school
+  // appear together, so it is where correcting them belongs. Editing swaps the line for
+  // the controls rather than opening a panel elsewhere — the thing being changed stays
+  // where she is looking.
+  function headingRow(student, schools, refresh) {
+    if (ui.editing !== student.id) {
+      return h('div', { class: 'detail-heading' },
+        h('h2', { text: rowLabel(student) }),
+        h('button', { class: 'linkish', id: 'edit-student', type: 'button', text: 'Edit',
+                      'on:click': async () => { ui.editing = student.id; await refresh(); } }));
+    }
+    const grade = gradeSelect('edit-student-grade', student.grade);
+    const [school, schoolList] = schoolBox('edit-student-school', 'edit-school-options',
+                                           student.school, schools);
+    return h('div', { class: 'detail-heading' },
+      h('h2', { text: student.name }), grade, school, schoolList,
+      h('button', {
+        class: 'primary', id: 'save-student', type: 'button', text: 'Save',
+        'on:click': async () => {
+          await SLP.store.updateStudentDetails(student.id, {
+            grade: grade.value,
+            school: SLP.derive.canonicalSchool(schools, school.value),
+          });
+          ui.editing = null;
+          await refresh();
+        },
+      }),
+      h('button', {
+        class: 'linkish', id: 'cancel-student-edit', type: 'button', text: 'Cancel',
+        'on:click': async () => { ui.editing = null; await refresh(); },
+      }));
+  }
+
+  // Last thing in the pane, below every goal, because it is the one control here that
+  // undoes a year of setup. Armed rather than immediate — the same two-step the objective
+  // delete uses — so distance and a second click both have to fail before anything moves.
+  function removeBlock(student, refresh) {
+    if (ui.removing !== student.id) {
+      return h('section', { class: 'panel remove-block' },
+        h('button', { class: 'linkish danger-link', id: 'remove-student', type: 'button',
+                      text: 'Remove from caseload',
+                      'on:click': async () => { ui.removing = student.id; await refresh(); } }));
+    }
+    return h('section', { class: 'panel remove-block' },
+      h('p', { class: 'muted',
+               text: 'Remove ' + student.name + ' from the caseload? Their sessions, goals ' +
+                     'and data are all kept — they just stop appearing on your lists.' }),
+      h('div', { class: 'row-form' },
+        h('button', {
+          class: 'plain danger-link', id: 'confirm-remove-student', type: 'button',
+          text: 'Yes, remove ' + student.name,
+          'on:click': async () => {
+            await SLP.store.setStudentActive(student.id, false);
+            ui.removing = null;
+            toast(student.name + ' removed from the caseload. Their history is kept.', 'ok');
+            await SLP.ui.go({ studentId: null });
+          },
+        }),
+        h('button', {
+          class: 'plain', id: 'cancel-remove-student', type: 'button', text: 'Keep them',
+          'on:click': async () => { ui.removing = null; await refresh(); },
+        })));
+  }
+
+  async function renderDetail(container, student, schools) {
     const refresh = () => SLP.ui.render();
     const detail = h('div', { id: 'student-detail' },
-      h('h2', { text: student.name +
-                      (student.grade ? ' · ' + SLP.model.gradeLabel(student.grade) : '') }));
+      headingRow(student, schools, refresh));
 
     const blocks = await SLP.store.objectivesForStudent(student.id);
     if (!blocks.length) {
@@ -1532,7 +1538,37 @@ SLP.ui = (() => {
     if (SLP.ui.students.renderAggregation) {
       await SLP.ui.students.renderAggregation(detail, student);
     }
+    detail.appendChild(removeBlock(student, refresh));   // last, deliberately
     container.appendChild(detail);
+  }
+
+  // Adding is start-of-year work, so it is one button until she asks. The form opens in
+  // the detail pane, which is wide enough for the three fields on one row; the narrow
+  // column beside the list is not.
+  function addForm(schools, refresh) {
+    const name = h('input', { type: 'text', id: 'new-student-name', placeholder: 'Student name' });
+    const grade = gradeSelect('new-student-grade', '');
+    const [school, schoolList] = schoolBox('new-student-school', 'school-options', '', schools);
+    return h('section', { class: 'panel', id: 'add-student-form' },
+      h('h2', { text: 'Add a student' }),
+      h('div', { class: 'row-form' },
+        name, grade, school, schoolList,
+        h('button', {
+          class: 'primary', id: 'add-student', type: 'button', text: 'Add student',
+          'on:click': async () => {
+            if (!name.value.trim()) { toast('A student needs a name.', 'warn'); return; }
+            await SLP.store.saveStudent(m.student({
+              name: name.value.trim(), grade: grade.value,
+              school: SLP.derive.canonicalSchool(schools, school.value),
+            }));
+            ui.adding = false;
+            await refresh();
+          },
+        }),
+        h('button', {
+          class: 'linkish', id: 'cancel-add-student', type: 'button', text: 'Cancel',
+          'on:click': async () => { ui.adding = false; await refresh(); },
+        })));
   }
 
   SLP.ui.views.students = async (root) => {
@@ -1554,14 +1590,41 @@ SLP.ui = (() => {
             'on:click': () => SLP.ui.go({ studentId: s.id }),
           }))));
 
+    // Counted, not listed: she needs to know the record survived a removal, but a former
+    // student among the current ones is a name she could open by mistake.
+    const all = await SLP.store.listStudents({});
+    const inactive = all.filter(s => !s.active);
+    const note = inactive.length
+      ? h('p', { class: 'muted', id: 'inactive-note',
+                 text: inactive.length + ' former student' + (inactive.length > 1 ? 's' : '') +
+                       ' kept for their history.' })
+      : null;
+
+    // Schools come from every record, not just the active ones: she is typing here, and a
+    // school only a former student attends is still a real school she might spell two ways.
+    const schools = SLP.derive.schools(all);
+    const refresh = () => SLP.ui.render();
+
+    const addButton = h('button', {
+      class: 'plain', id: 'add-student-toggle', type: 'button', text: '+ Add student',
+      'on:click': async () => { ui.adding = true; await SLP.ui.go({ studentId: null }); } });
+
     const detail = h('div');
     const selected = shown.find(s => s.id === SLP.ui.route.studentId) ||
                      students.find(s => s.id === SLP.ui.route.studentId);
-    if (selected) await renderDetail(detail, selected);
-    else detail.appendChild(h('p', { class: 'empty', text: 'Pick a student to see their goals.' }));
+    // The form and a student's goals want the same pane, so opening one closes the other.
+    // Picking a student is the stronger signal: it is what she just clicked.
+    if (selected) {
+      ui.adding = false;
+      await renderDetail(detail, selected, schools);
+    } else if (ui.adding) {
+      detail.appendChild(addForm(schools, refresh));
+    } else {
+      detail.appendChild(h('p', { class: 'empty', text: 'Pick a student to see their goals.' }));
+    }
 
     root.appendChild(h('div', { class: 'split' },
-      h('div', {}, filters.el, list),
+      h('div', {}, filters.el, addButton, list, note),
       detail));
   };
 
@@ -2160,10 +2223,7 @@ SLP.ui = (() => {
       await restoreFromFile(fileInput.files && fileInput.files[0]);
     });
 
-    const when = status.lastBackupAt
-      ? 'last backup ' + (status.staleDays === 0 ? 'today'
-          : status.staleDays + ' day' + (status.staleDays === 1 ? '' : 's') + ' ago')
-      : 'never backed up';
+    const when = status.lastBackupAt ? 'saved ' + status.since : 'never backed up';
 
     // Everyday state names the file she is trusting; before setup, the status line
     // carries the invitation rather than putting a second button beside the first.

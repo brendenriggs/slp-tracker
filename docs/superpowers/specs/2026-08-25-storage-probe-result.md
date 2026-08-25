@@ -67,25 +67,36 @@ the **File System Access handle**, not on a download. Same effort, no permission
 after the first pick, and the file can sit in Drive for Desktop so it syncs off the
 laptop on its own.
 
-## Still unverified — and it gates every future update
+## Resolved — data survives the app file being replaced or moved
 
-**Does her data survive the app file being replaced or moved?**
+**Answer: yes. `file://` storage is keyed to the shared `file://` origin, not to the
+file's path. Shipping her a new copy of the app does not wipe her data.**
 
-The probe reported `origin: file://`, which suggests Chrome treats all local files as
-one shared origin and the data is keyed to that, not to the file's path. If that holds,
-shipping her a new version of the app is safe: she double-clicks the new file and her
-sessions are still there.
+Tested 2026-08-25 on Linux, Chrome 147, headless with a persistent profile:
 
-If it does *not* hold, **every update wipes her data**, and the app needs an
-export/import step baked into its release process from day one.
+1. A probe page at `…/origin-test/a/probe.html` wrote a token to **both** localStorage
+   and IndexedDB.
+2. A byte-identical copy at `…/origin-test/b/probe.html` — a different directory — was
+   opened in the same browser profile.
+3. It read **both** values back: `ls=PROBETOKEN-a-…`, `idb=PROBETOKEN-a-…`.
 
-**Cheap test:** copy `storage-probe.html` to a different folder — a subfolder, or
-Documents instead of Desktop — open that copy, and see whether the saved note comes
-back. No new code needed; the existing page answers it.
+Corroborating detail from the profile on disk: Chrome created exactly one store,
+`Default/IndexedDB/file__0.indexeddb.leveldb`, and the localStorage record is namespaced
+`_file://`. Both are named for the origin. A second path produced no second store.
+
+**Consequence:** delivery is just "here is the new file, double-click it." No
+export/import dance in the release process, and the update path is not a data-loss risk.
+
+*Confidence note:* this ran on Chrome 147/Linux; hers is Chrome 151/Windows. The
+`file://` origin model is Chromium-wide and not platform-specific, so this is expected
+to hold — but the first time she gets an updated file, have her confirm her data is
+still there before she throws the old copy away. That costs one glance and removes the
+remaining doubt.
 
 ## Also outstanding
 
-A cleaner restart confirmation (caveat 2). Lower stakes than the path question.
+A cleaner restart confirmation (caveat 2). Lower stakes than the path question, which is
+now closed.
 
 ---
 

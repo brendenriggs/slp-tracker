@@ -1052,7 +1052,10 @@ SLP.ui = (() => {
 
   const draft = { studentIds: new Set(), editingId: null };  // survives re-render within the tab
 
-  const rowLabel = s => s.name + (s.grade ? ' · ' + SLP.model.gradeLabel(s.grade) : '');
+  // Name, then whichever of grade and school she has filled in. Built by dropping the
+  // blanks rather than by appending, so a missing one never leaves a separator dangling.
+  const rowLabel = s => [s.name, s.grade ? SLP.model.gradeLabel(s.grade) : null, s.school || null]
+    .filter(Boolean).join(' · ');
 
   // One school box built the same way wherever it appears, so the add form and the edit
   // row can never drift apart on what a school is. The grade picker is SLP.ui.gradeSelect,

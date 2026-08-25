@@ -221,6 +221,31 @@ test('a student with no grade is listed by name alone', async () => {
   eq(/·/.test(doc.querySelector('#caseload-list').textContent), false, 'no dangling separator');
 });
 
+// The caseload is the roster view and the only place school is editable, so it should be
+// the place school is readable. Nothing else on any screen shows it.
+test('the caseload row names the school after the grade', async () => {
+  const w = await loadApp();
+  await seedStudent(w, 'Ada', '3', 'Lincoln Elementary');
+  const text = (await openSchedule(w)).querySelector('#caseload-list').textContent;
+  assert(/Ada · 3rd grade · Lincoln Elementary/.test(text),
+         'reads "Ada · 3rd grade · Lincoln Elementary", got: ' + text);
+});
+
+test('a student with a school but no grade skips straight to the school', async () => {
+  const w = await loadApp();
+  await seedStudent(w, 'Ada', '', 'Lincoln Elementary');
+  const text = (await openSchedule(w)).querySelector('#caseload-list').textContent;
+  assert(/Ada · Lincoln Elementary/.test(text), 'no gap where the grade would be, got: ' + text);
+});
+
+test('a student with a grade but no school keeps a clean row', async () => {
+  const w = await loadApp();
+  await seedStudent(w, 'Ada', '3', '');
+  const text = (await openSchedule(w)).querySelector('#caseload-list').textContent;
+  assert(/Ada · 3rd grade/.test(text), 'the grade still reads, got: ' + text);
+  eq(/3rd grade ·/.test(text), false, 'and no separator dangles after it');
+});
+
 test('a mistyped school can be corrected from the caseload', async () => {
   const w = await loadApp();
   const ada = await seedStudent(w, 'Ada', '3', 'Lincon Elementary');

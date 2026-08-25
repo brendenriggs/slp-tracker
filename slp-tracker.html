@@ -471,6 +471,83 @@ SLP.store = (() => {
 })();
 
 // ============================================================
+// SECTION: derive — everything computed, nothing stored.
+// Progress is measured within one objective over time. Never across objectives.
+// ============================================================
+SLP.derive = (() => {
+  const m = SLP.model;
+
+  // Has she actually charted this student in this slot?
+  function touched(entry, studentId) {
+    const note = entry.notes[studentId];
+    if (note && note.text && note.text.trim()) return true;
+    const dps = entry.datapoints[studentId] || {};
+    return Object.values(dps).some(m.hasEnteredData);
+  }
+
+  function studentState(entry, studentId) {
+    const a = entry.attendance[studentId];
+    if (a && a.status !== 'present') return a.status;   // absent / excused / cancelled
+    if (a && a.status === 'present') return 'present';
+    return touched(entry, studentId) ? 'present' : 'none';
+  }
+
+  function chartedCount(plan) {
+    let charted = 0, total = 0;
+    for (const entry of plan) {
+      for (const s of entry.students) {
+        total++;
+        if (studentState(entry, s.id) !== 'none') charted++;
+      }
+    }
+    return { charted, total };
+  }
+
+  function pair(objective) {
+    const a = objective.fields.filter(f => f.role === 'achieved');
+    const t = objective.fields.filter(f => f.role === 'target');
+    return (a.length === 1 && t.length === 1) ? { achieved: a[0], target: t[0] } : null;
+  }
+
+  function series(objective, rows) {
+    const p = pair(objective);
+    if (p) {
+      const points = [];
+      for (const { date, dp } of rows) {
+        const r = m.ratio(objective, dp);
+        if (r) points.push({ date, value: r.pct, label: r.achieved + ' / ' + r.target });
+      }
+      return [{ fieldId: p.achieved.id, label: objective.fields.find(f => f.role === 'achieved').label,
+                kind: 'pct', points }];
+    }
+    return objective.fields
+      .filter(f => f.type === 'number')
+      .map(f => ({
+        fieldId: f.id, label: f.label, kind: 'raw',
+        points: rows
+          .filter(({ dp }) => dp.values[f.id] && dp.values[f.id].entered)
+          .map(({ date, dp }) => ({ date, value: dp.values[f.id].value,
+                                    label: String(dp.values[f.id].value) })),
+      }));
+  }
+
+  // Her goal text says "in 3 out of 4 trials across three sessions" — the pair is the
+  // criterion, so meeting it is simply achieved >= target.
+  function mastery(objective, rows, { window = 3 } = {}) {
+    if (!pair(objective)) return null;
+    const measured = rows
+      .map(({ dp }) => m.ratio(objective, dp))
+      .filter(Boolean);
+    if (!measured.length) return { met: 0, of: 0, window, mastered: false };
+    const recent = measured.slice(-window);
+    const met = recent.filter(r => r.achieved >= r.target).length;
+    return { met, of: recent.length, window, mastered: recent.length === window && met === window };
+  }
+
+  return { studentState, chartedCount, series, mastery, pair };
+})();
+
+// ============================================================
 // SECTION: boot — wire everything up.
 // ============================================================
 SLP.ready = Promise.resolve();

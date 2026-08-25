@@ -548,6 +548,151 @@ SLP.derive = (() => {
 })();
 
 // ============================================================
+// SECTION: backup — the safety net.
+// persist() was DENIED on her machine: storage is evictable and
+// "Clear browsing data" wipes it. This section is load-bearing.
+// ============================================================
+SLP.backup = (() => {
+  const db = SLP.db, m = SLP.model;
+  const SCHEMA_VERSION = 1;
+
+  const pad = n => String(n).padStart(2, '0');
+  function today() {
+    const d = new Date();
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  }
+
+  async function meta() {
+    return (await db.get('meta', 'meta')) ||
+      { id: 'meta', schemaVersion: SCHEMA_VERSION, lastBackupAt: null, backupFileHandle: null };
+  }
+
+  async function exportObject() {
+    const data = {};
+    for (const store of db.STORES) {
+      // The handle is a live browser object; it must not travel inside a JSON file.
+      data[store] = store === 'meta' ? [] : await db.getAll(store);
+    }
+    return {
+      schemaVersion: SCHEMA_VERSION,
+      appVersion: SLP.version,
+      exportedAt: m.now(),
+      data,
+    };
+  }
+
+  const exportText = async () => JSON.stringify(await exportObject(), null, 2);
+  const filename = () => 'slp-data-' + today() + '.json';
+
+  async function markBackedUp() {
+    const meta_ = await meta();
+    meta_.lastBackupAt = m.now();
+    await db.put('meta', meta_);
+  }
+
+  const hasFileApi = () => typeof window.showSaveFilePicker === 'function';
+
+  async function pickBackupFile() {
+    if (!hasFileApi()) return false;
+    const handle = await window.showSaveFilePicker({
+      suggestedName: filename(),
+      types: [{ description: 'SLP backup', accept: { 'application/json': ['.json'] } }],
+    });
+    const meta_ = await meta();
+    meta_.backupFileHandle = handle;   // structured-cloneable; survives restart
+    await db.put('meta', meta_);
+    return true;
+  }
+
+  async function writeToHandle() {
+    const meta_ = await meta();
+    const handle = meta_.backupFileHandle;
+    if (!handle) return 'no-handle';
+    if (handle.queryPermission) {
+      let perm = await handle.queryPermission({ mode: 'readwrite' });
+      if (perm !== 'granted' && handle.requestPermission) {
+        perm = await handle.requestPermission({ mode: 'readwrite' });
+      }
+      if (perm !== 'granted') return 'denied';
+    }
+    const writable = await handle.createWritable();
+    await writable.write(await exportText());
+    await writable.close();
+    await markBackedUp();
+    return 'ok';
+  }
+
+  async function download() {
+    const blob = new Blob([await exportText()], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename();
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    await markBackedUp();
+  }
+
+  async function backupNow() {
+    const via = await writeToHandle();
+    if (via === 'ok') return { via: 'handle' };
+    await api.download();     // through the exported object, so it stays a testable seam
+    return { via: 'download' };
+  }
+
+  // Validate the WHOLE payload before touching the database. A truncated or foreign
+  // file must never leave her with half a caseload.
+  async function restoreFromText(text) {
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      throw new Error('That file is not valid JSON — it may be damaged or the wrong file.');
+    }
+    if (!parsed || typeof parsed !== 'object' || !parsed.data || typeof parsed.data !== 'object') {
+      throw new Error('That does not look like an SLP Session Tracker backup.');
+    }
+    if (typeof parsed.schemaVersion !== 'number') {
+      throw new Error('That backup has no schema version — it is not an SLP backup.');
+    }
+    if (parsed.schemaVersion > SCHEMA_VERSION) {
+      throw new Error('That backup was written by a newer version of the app (v' +
+                      parsed.schemaVersion + '). Use the newer app file to open it.');
+    }
+    for (const store of db.STORES) {
+      if (store === 'meta') continue;
+      if (!Array.isArray(parsed.data[store])) {
+        throw new Error('That backup is incomplete — the "' + store +
+                        '" section is missing. Nothing was changed.');
+      }
+    }
+
+    const keepMeta = await meta();           // the file handle is local, not part of the backup
+    await db.clearAll();
+    const restored = {};
+    for (const store of db.STORES) {
+      if (store === 'meta') continue;
+      const rows = parsed.data[store];
+      if (rows.length) await db.bulkPut(store, rows);
+      restored[store] = rows.length;
+    }
+    await db.put('meta', keepMeta);
+    return { restored };
+  }
+
+  async function status() {
+    const meta_ = await meta();
+    const staleDays = meta_.lastBackupAt
+      ? Math.floor((Date.now() - new Date(meta_.lastBackupAt).getTime()) / 86400000)
+      : null;
+    return { lastBackupAt: meta_.lastBackupAt, hasHandle: !!meta_.backupFileHandle, staleDays };
+  }
+
+  const api = { exportObject, exportText, filename, download, hasFileApi, pickBackupFile,
+                writeToHandle, backupNow, restoreFromText, status, SCHEMA_VERSION };
+  return api;
+})();
+
+// ============================================================
 // SECTION: boot — wire everything up.
 // ============================================================
 SLP.ready = Promise.resolve();

@@ -152,7 +152,27 @@
 
   #backup-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
                 padding-bottom: 8px; font-size: 13px; }
-  #backup-status { color: var(--muted); }
+  #backup-status { color: var(--muted); flex: 1 1 auto; min-width: 0; }
+  button.linklike { background: none; border: 0; padding: 0; font: inherit;
+                    color: var(--accent); text-decoration: underline; cursor: pointer; }
+  button.linklike:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #backup-more { flex: 0 0 auto; text-decoration: none; }
+  #backup-more-panel { display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+                       padding: 8px 11px; margin-bottom: 10px; font-size: 13px;
+                       background: var(--row); border-radius: 6px; }
+  button.danger { background: var(--danger); color: #fff; border: 1px solid var(--danger);
+                  border-radius: 6px; padding: 6px 12px; font: inherit; cursor: pointer; }
+  button.danger:disabled { opacity: 0.45; cursor: not-allowed; }
+  #restore-confirm { border: 1px solid var(--danger); border-radius: 6px;
+                     padding: 12px 14px; margin-bottom: 10px; font-size: 13px;
+                     background: #fffafa; }
+  .confirm-title { font-weight: 600; font-size: 14px; margin: 0 0 8px; }
+  .confirm-line { margin: 2px 0; font-variant-numeric: tabular-nums; }
+  .confirm-note { margin: 8px 0 2px; color: var(--muted); }
+  .confirm-warn { margin: 8px 0 2px; color: var(--danger); font-weight: 600; }
+  #restore-confirm-phrase { font: inherit; padding: 5px 8px; margin-top: 4px;
+                            border: 1px solid var(--danger); border-radius: 5px; }
+  .confirm-actions { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
   #backup-nag { background: #fffaf0; border: 1px solid var(--warn); color: var(--warn);
                 border-radius: 6px; padding: 7px 11px; margin-bottom: 10px; font-size: 13px; }
 </style>
@@ -863,7 +883,11 @@ SLP.backup = (() => {
 
   // Validate the WHOLE payload before touching the database. A truncated or foreign
   // file must never leave her with half a caseload.
-  async function restoreFromText(text) {
+  //
+  // Reading and committing are deliberately separate: she is shown what a file holds,
+  // and what it would cost her, while everything of hers is still on disk. Nothing
+  // here writes — parseBackup is safe to call on a file she has not agreed to yet.
+  function parseBackup(text) {
     let parsed;
     try {
       parsed = JSON.parse(text);
@@ -887,7 +911,15 @@ SLP.backup = (() => {
                         '" section is missing. Nothing was changed.');
       }
     }
+    const counts = {};
+    for (const store of db.STORES) {
+      if (store === 'meta') continue;
+      counts[store] = parsed.data[store].length;
+    }
+    return { parsed, counts, exportedAt: parsed.exportedAt || null };
+  }
 
+  async function applyBackup({ parsed }) {
     const keepMeta = await meta();           // the file handle is local, not part of the backup
     await db.clearAll();
     const restored = {};
@@ -901,16 +933,25 @@ SLP.backup = (() => {
     return { restored };
   }
 
+  async function restoreFromText(text) {
+    return applyBackup(parseBackup(text));
+  }
+
   async function status() {
     const meta_ = await meta();
     const staleDays = meta_.lastBackupAt
       ? Math.floor((Date.now() - new Date(meta_.lastBackupAt).getTime()) / 86400000)
       : null;
-    return { lastBackupAt: meta_.lastBackupAt, hasHandle: !!meta_.backupFileHandle, staleDays };
+    return { lastBackupAt: meta_.lastBackupAt, hasHandle: !!meta_.backupFileHandle,
+             // Naming the file is what turns "a backup exists somewhere" into something
+             // she can actually go and look at.
+             fileName: (meta_.backupFileHandle && meta_.backupFileHandle.name) || null,
+             staleDays };
   }
 
   const api = { exportObject, exportText, filename, download, hasFileApi, pickBackupFile,
-                writeToHandle, backupNow, restoreFromText, status, SCHEMA_VERSION };
+                writeToHandle, backupNow, parseBackup, applyBackup, restoreFromText,
+                status, SCHEMA_VERSION };
   return api;
 })();
 
@@ -1972,6 +2013,15 @@ SLP.ui = (() => {
 (() => {
   const { h, toast } = SLP.ui;
   const STALE_AFTER_DAYS = 3;
+  const PHRASE = 'REPLACE EVERYTHING';
+
+  // render() rebuilds the DOM, so anything the bar remembers between renders has to
+  // live out here — the same reason ui.aggregation keeps its date filter at module level.
+  const ui = {
+    moreOpen: false,        // the rarely-used controls: linking, changing, restoring
+    pending: null,          // a parsed backup she has been shown but not yet agreed to
+    typed: '',              // what she has typed into the confirmation box so far
+  };
 
   async function backupNow() {
     try {
@@ -1983,16 +2033,58 @@ SLP.ui = (() => {
     await SLP.ui.render();
   }
 
+  // Reading a file is not agreeing to it. This stages what the file holds and what
+  // replacing it would cost her, then hands the decision back. Nothing is written here.
   async function restoreFromFile(file) {
     if (!file) return;
     try {
       const text = await file.text();
-      const { restored } = await SLP.backup.restoreFromText(text);
+      const staged = SLP.backup.parseBackup(text);
+      ui.pending = {
+        staged,
+        fileName: file.name || 'that file',
+        current: {
+          students: (await SLP.db.getAll('students')).length,
+          sessions: (await SLP.db.getAll('sessions')).length,
+        },
+        status: await SLP.backup.status(),
+      };
+      ui.typed = '';
+    } catch (e) {
+      ui.pending = null;
+      toast(e.message, 'error');
+    }
+    await SLP.ui.render();
+  }
+
+  // How much friction the replacement deserves, measured by what she would actually
+  // lose: nothing at all, a copy that is safely on disk, or the only copy there is.
+  function atRisk() {
+    if (!ui.pending || ui.pending.current.students === 0) return 'none';
+    const s = ui.pending.status;
+    const safe = s.lastBackupAt !== null && s.staleDays < STALE_AFTER_DAYS;
+    return safe ? 'copied' : 'only-copy';
+  }
+  const mayReplace = () => atRisk() !== 'only-copy' || ui.typed.trim() === PHRASE;
+
+  async function confirmRestore() {
+    if (!ui.pending || !mayReplace()) return;
+    const staged = ui.pending.staged;
+    ui.pending = null;
+    ui.typed = '';
+    try {
+      const { restored } = await SLP.backup.applyBackup(staged);
       const n = Object.values(restored).reduce((a, b) => a + b, 0);
       toast('Restored ' + n + ' records.', 'ok');
     } catch (e) {
       toast(e.message, 'error');
     }
+    await SLP.ui.render();
+  }
+
+  async function cancelRestore() {
+    ui.pending = null;
+    ui.typed = '';
     await SLP.ui.render();
   }
 
@@ -2024,34 +2116,116 @@ SLP.ui = (() => {
       await restoreFromFile(fileInput.files && fileInput.files[0]);
     });
 
-    const els = [h('div', { class: 'backup-bar-inner', id: 'backup-bar' },
+    const when = status.lastBackupAt
+      ? 'last backup ' + (status.staleDays === 0 ? 'today'
+          : status.staleDays + ' day' + (status.staleDays === 1 ? '' : 's') + ' ago')
+      : 'never backed up';
+
+    // Everyday state names the file she is trusting; before setup, the status line
+    // carries the invitation rather than putting a second button beside the first.
+    const statusEl = status.hasHandle
+      ? h('span', { id: 'backup-status',
+                    text: 'Saving to ' + (status.fileName || 'your backup file') + ' · ' + when })
+      : h('span', { id: 'backup-status' },
+          h('span', { text: 'Backups are not saving to a file yet — ' }),
+          h('button', { class: 'linklike', id: 'backup-setup', type: 'button',
+                        text: 'choose where to save them…', 'on:click': pickFile }));
+
+    // Back up now stays visible in both states: it is the only control that works
+    // everywhere, including a browser with no File System Access API.
+    const row = h('div', { class: 'backup-bar-inner', id: 'backup-bar' },
       h('button', { class: 'primary', id: 'backup-now', type: 'button', text: 'Back up now',
                     'on:click': backupNow }),
+      statusEl,
+      h('button', { class: 'linklike', id: 'backup-more', type: 'button',
+                    'aria-expanded': String(ui.moreOpen),
+                    text: ui.moreOpen ? 'Less ▴' : 'More ▾',
+                    'on:click': async () => { ui.moreOpen = !ui.moreOpen; await SLP.ui.render(); } }),
+      fileInput);
+
+    // Linking once and restoring after a disaster are not daily work, so they stay out
+    // of the way — and out of the tab order — until she asks for them.
+    const more = ui.moreOpen ? h('div', { id: 'backup-more-panel' },
       h('button', { class: 'plain', id: 'backup-pick', type: 'button',
-                    text: status.hasHandle ? 'Change backup file' : 'Link a backup file…',
+                    text: status.hasHandle ? 'Change where backups save…'
+                                           : 'Choose where to save backups…',
                     'on:click': pickFile }),
-      h('button', { class: 'plain', id: 'backup-restore', type: 'button', text: 'Restore…',
-                    'on:click': () => fileInput.click() }),
-      fileInput,
-      h('span', { id: 'backup-status',
-        text: (status.hasHandle ? 'Backup file linked' : 'Backup file not linked') +
-              ' · ' + (status.lastBackupAt
-                ? 'last backup ' + (status.staleDays === 0 ? 'today'
-                    : status.staleDays + ' day' + (status.staleDays === 1 ? '' : 's') + ' ago')
-                : 'never backed up') }))];
+      h('button', { class: 'plain', id: 'backup-restore', type: 'button',
+                    text: 'Restore from a backup…', 'on:click': () => fileInput.click() }),
+      h('span', { class: 'muted',
+                  text: 'Restoring replaces everything on this laptop.' })) : null;
+
+    const els = [row];
+    if (more) els.push(more);
+    if (ui.pending) els.push(confirmPanel());
 
     const stale = status.lastBackupAt === null || status.staleDays >= STALE_AFTER_DAYS;
     if (hasData && stale) {
       els.unshift(h('div', { id: 'backup-nag' },
         status.lastBackupAt === null
-          ? 'This data has never been backed up. Chrome can clear it without warning — ' +
-            'press Back up now.'
+          ? 'Your work has never been backed up. It is saved on this laptop only, and ' +
+            'Chrome can erase it without warning — press Back up now.'
           : 'Last backup was ' + status.staleDays + ' days ago. Press Back up now.'));
     }
     return els;
   }
 
-  SLP.ui.backup = { bar, backupNow, restoreFromFile, pickFile };
+  const count = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
+
+  // Both sides of the trade, in her units, before anything is replaced. Seeing
+  // "12 students" against her own 49 is what catches the wrong file.
+  function confirmPanel() {
+    const p = ui.pending;
+    const risk = atRisk();
+    const rows = [
+      h('p', { class: 'confirm-title', text: 'Replace everything with this backup?' }),
+      h('p', { class: 'confirm-line',
+               text: 'On this laptop now: ' + count(p.current.students, 'student') +
+                     ', ' + count(p.current.sessions, 'session') }),
+      h('p', { class: 'confirm-line',
+               text: 'In ' + p.fileName + ': ' + count(p.staged.counts.students, 'student') +
+                     ', ' + count(p.staged.counts.sessions, 'session') }),
+    ];
+
+    if (risk === 'none') {
+      rows.push(h('p', { class: 'confirm-note',
+                         text: 'There is nothing on this laptop to lose.' }));
+    } else if (risk === 'copied') {
+      rows.push(h('p', { class: 'confirm-note',
+                         text: 'Your current work is backed up to ' +
+                               (p.status.fileName || 'your backup file') +
+                               ', so you could get it back.' }));
+    }
+
+    const go = h('button', { class: 'danger', id: 'restore-confirm-go', type: 'button',
+                             text: 'Replace everything', 'on:click': confirmRestore });
+
+    if (risk === 'only-copy') {
+      rows.push(h('p', { class: 'confirm-warn',
+                         text: 'Your current work has never been backed up. Replacing it ' +
+                               'cannot be undone.' }));
+      const box = h('input', { type: 'text', id: 'restore-confirm-phrase', autocomplete: 'off',
+                               'aria-label': 'Type ' + PHRASE + ' to confirm',
+                               placeholder: PHRASE, value: ui.typed });
+      // Updated in place rather than through a re-render, so the caret and what she has
+      // already typed survive every keystroke.
+      box.addEventListener('input', () => {
+        ui.typed = box.value;
+        go.disabled = !mayReplace();
+      });
+      rows.push(h('p', { class: 'confirm-note', text: 'Type ' + PHRASE + ' to continue:' }));
+      rows.push(box);
+    }
+
+    go.disabled = !mayReplace();
+    rows.push(h('div', { class: 'confirm-actions' }, go,
+      h('button', { class: 'plain', id: 'restore-confirm-cancel', type: 'button',
+                    text: 'Cancel', 'on:click': cancelRestore })));
+    return h('div', { id: 'restore-confirm', role: 'group',
+                      'aria-label': 'Confirm restore' }, ...rows);
+  }
+
+  SLP.ui.backup = { bar, backupNow, restoreFromFile, pickFile, confirmRestore, cancelRestore };
 })();
 
 // ============================================================

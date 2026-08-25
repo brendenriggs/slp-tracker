@@ -38,22 +38,138 @@ test('a stale backup nags with the day count', async () => {
          'names the number of days');
 });
 
-test('the status line reports whether a backup file is linked', async () => {
+test('the status line says plainly that backups are not saving anywhere yet', async () => {
   const w = await loadApp();
-  assert(/not linked/i.test(w.document.querySelector('#backup-status').textContent),
-         'no file picked yet');
+  assert(/not saving to a file/i.test(w.document.querySelector('#backup-status').textContent),
+         'no file picked yet, said without jargon');
 });
 
-test('restoring from a chosen file replaces the data and re-renders', async () => {
+test('the status line names the linked file once one is chosen', async () => {
+  const w = await loadApp();
+  await w.SLP.db.put('meta', { id: 'meta', schemaVersion: 1, lastBackupAt: null,
+                               backupFileHandle: { name: 'speech-backup.json' } });
+  await w.SLP.ui.render();
+  assert(/speech-backup\.json/.test(w.document.querySelector('#backup-status').textContent),
+         'she can see exactly which file she is trusting');
+});
+
+test('the rarely used controls stay tucked away until More is opened', async () => {
+  const w = await loadApp();
+  assert(!w.document.querySelector('#backup-restore'), 'restore is not sitting on the bar');
+  assert(!w.document.querySelector('#backup-pick'), 'nor is changing the file');
+  assert(w.document.querySelector('#backup-now'), 'the everyday action still is');
+
+  w.document.querySelector('#backup-more').click();
+  await w.SLP.ui.render();
+  assert(w.document.querySelector('#backup-restore'), 'restore appears once she opens More');
+});
+
+test('choosing a restore file replaces nothing until it is confirmed', async () => {
+  const w = await loadApp();
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Ada' }));
+  const text = await w.SLP.backup.exportText();
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Grace' }));
+
+  // Drive the restore handler directly: constructing a real FileList is not possible.
+  await w.SLP.ui.backup.restoreFromFile(new w.File([text], 'slp-data-2026-09-07.json',
+                                                   { type: 'application/json' }));
+  eq((await w.SLP.store.listStudents({})).length, 2, 'still her data until she says yes');
+  assert(w.document.querySelector('#restore-confirm'), 'and the confirmation is on screen');
+});
+
+test('the confirmation counts what is at stake on both sides', async () => {
+  const w = await loadApp();
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Ada' }));
+  const text = await w.SLP.backup.exportText();
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Grace' }));
+
+  await w.SLP.ui.backup.restoreFromFile(new w.File([text], 'b.json'));
+  const panel = w.document.querySelector('#restore-confirm').textContent;
+  assert(/2 students/.test(panel), 'what she has now — got: ' + panel);
+  assert(/1 student\b/.test(panel), 'what the file holds — got: ' + panel);
+});
+
+test('cancelling a restore leaves the data alone', async () => {
+  const w = await loadApp();
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Ada' }));
+  const text = await w.SLP.backup.exportText();
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Grace' }));
+
+  await w.SLP.ui.backup.restoreFromFile(new w.File([text], 'b.json'));
+  w.document.querySelector('#restore-confirm-cancel').click();
+  await w.SLP.ui.render();
+
+  eq((await w.SLP.store.listStudents({})).length, 2, 'nothing replaced');
+  assert(!w.document.querySelector('#restore-confirm'), 'and the panel is gone');
+});
+
+test('confirming a restore replaces the data and re-renders', async () => {
   const w = await loadApp();
   await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Ada' }));
   const text = await w.SLP.backup.exportText();
   await w.SLP.db.clearAll();
 
-  // Drive the restore handler directly: constructing a real FileList is not possible.
   await w.SLP.ui.backup.restoreFromFile(new w.File([text], 'slp-data-2026-09-07.json',
                                                    { type: 'application/json' }));
+  w.document.querySelector('#restore-confirm-go').click();
+  await w.SLP.ui.render();
   eq((await w.SLP.store.listStudents({})).map(s => s.name), ['Ada'], 'data restored');
+});
+
+test('restoring into an empty app asks only once', async () => {
+  const w = await loadApp();
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Ada' }));
+  const text = await w.SLP.backup.exportText();
+  await w.SLP.db.clearAll();
+
+  await w.SLP.ui.backup.restoreFromFile(new w.File([text], 'b.json'));
+  assert(!w.document.querySelector('#restore-confirm-phrase'),
+         'nothing to lose, so nothing to type');
+  assert(!w.document.querySelector('#restore-confirm-go').disabled, 'she can just proceed');
+});
+
+test('replacing data that was never backed up demands the typed phrase', async () => {
+  const w = await loadApp();
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Ada' }));
+  const text = await w.SLP.backup.exportText();
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Grace' }));
+
+  await w.SLP.ui.backup.restoreFromFile(new w.File([text], 'b.json'));
+  assert(w.document.querySelector('#restore-confirm-go').disabled,
+         'the button is dead until she types it');
+
+  const box = w.document.querySelector('#restore-confirm-phrase');
+  assert(box, 'and there is somewhere to type it');
+  box.value = 'REPLACE EVERYTHING';
+  box.dispatchEvent(new w.Event('input', { bubbles: true }));
+  assert(!w.document.querySelector('#restore-confirm-go').disabled, 'now she may');
+});
+
+test('a half-typed phrase does not unlock the replace button', async () => {
+  const w = await loadApp();
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Ada' }));
+  const text = await w.SLP.backup.exportText();
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Grace' }));
+
+  await w.SLP.ui.backup.restoreFromFile(new w.File([text], 'b.json'));
+  const box = w.document.querySelector('#restore-confirm-phrase');
+  box.value = 'REPLACE EVERY';
+  box.dispatchEvent(new w.Event('input', { bubbles: true }));
+  assert(w.document.querySelector('#restore-confirm-go').disabled, 'still locked');
+});
+
+test('data backed up today is replaced without making her type', async () => {
+  const w = await loadApp();
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Ada' }));
+  const text = await w.SLP.backup.exportText();
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Grace' }));
+  await w.SLP.db.put('meta', { id: 'meta', schemaVersion: 1,
+                               lastBackupAt: new Date().toISOString(),
+                               backupFileHandle: { name: 'speech-backup.json' } });
+
+  await w.SLP.ui.backup.restoreFromFile(new w.File([text], 'b.json'));
+  assert(!w.document.querySelector('#restore-confirm-phrase'),
+         'her work is safe on disk, so the heavy gate would be friction for nothing');
 });
 
 test('restoring a damaged file reports the problem and changes nothing', async () => {

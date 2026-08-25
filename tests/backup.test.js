@@ -129,3 +129,40 @@ test('the File System Access API is detected', async () => {
   eq(w.SLP.backup.hasFileApi(), typeof w.showSaveFilePicker === 'function',
      'detection matches reality in this browser');
 });
+
+// Reading a backup and committing to it are separate acts, so she can be shown what a
+// file holds before anything of hers is replaced.
+test('parseBackup reports what a file holds without changing anything', async () => {
+  const w = await loadApp();
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Ada' }));
+  const text = await w.SLP.backup.exportText();
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Grace' }));
+
+  const parsed = w.SLP.backup.parseBackup(text);
+  eq(parsed.counts.students, 1, 'the file holds one student');
+  eq((await w.SLP.store.listStudents({})).length, 2, 'and hers are untouched');
+});
+
+test('parseBackup counts sessions too, so a wrong file is obvious', async () => {
+  const w = await loadApp();
+  const parsed = w.SLP.backup.parseBackup(await w.SLP.backup.exportText());
+  eq(parsed.counts.sessions, 0, 'an empty app exports no sessions');
+});
+
+// These assert the function exists before asserting it throws: otherwise a missing
+// parseBackup throws a TypeError and the test passes green having proved nothing.
+test('parseBackup refuses a damaged file', async () => {
+  const w = await loadApp();
+  assert(typeof w.SLP.backup.parseBackup === 'function', 'parseBackup exists');
+  const e = await throws(() => w.SLP.backup.parseBackup('garbage'), 'unreadable json must throw');
+  assert(!/is not a function/.test(e.message), 'and throws about the file, not about itself');
+});
+
+test('parseBackup refuses a file that is not an SLP backup', async () => {
+  const w = await loadApp();
+  assert(typeof w.SLP.backup.parseBackup === 'function', 'parseBackup exists');
+  const e = await throws(() => w.SLP.backup.parseBackup('{"hello":"world"}'),
+                         'a stray json file must throw');
+  assert(/SLP Session Tracker backup|schema version/i.test(e.message),
+         'named for what is wrong with it — got: ' + e.message);
+});

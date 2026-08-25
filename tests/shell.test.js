@@ -69,3 +69,50 @@ test('toast shows and names its kind', async () => {
   eq(t.textContent, 'saved', 'message');
   assert(t.classList.contains('toast-ok'), 'kind applied');
 });
+
+// ---------------------------------------------------------------------------
+// The school select's min-width:0 is load-bearing and invisible to every other
+// test in this suite: without it the select claims its longest option's width
+// and pushes out of its column. It was scoped by id, so it protected one of the
+// two lists; these tests are what stop it silently covering one again.
+//
+// Both checks measure rather than guess. The computed-style one asks whether the
+// rule reaches the element at all; the overflow one compares the select's right
+// edge against its OWN container's, so there is no hard-coded pixel to be wrong
+// about — a wider panel or a different font changes both sides together.
+// ---------------------------------------------------------------------------
+
+const LONG_SCHOOL = 'Roosevelt Consolidated Elementary and Middle School Campus North';
+
+async function seedTwoSchools(w) {
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Ada', school: LONG_SCHOOL }));
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Bo', school: 'Lincoln Elementary' }));
+}
+
+test('the school filter min-width rule reaches both lists, not just the students tab', async () => {
+  const w = await loadApp();
+  await seedTwoSchools(w);
+  for (const [tab, id] of [['students', '#student-school-filter'],
+                           ['schedule', '#caseload-school-filter']]) {
+    await w.SLP.ui.go({ tab });
+    const el = w.document.querySelector(id);
+    assert(el, id + ' exists on the ' + tab + ' tab');
+    eq(w.getComputedStyle(el).minWidth, '0px', 'min-width:0 applies to ' + id);
+  }
+});
+
+test('a long school name does not push the filter out of its column', async () => {
+  const w = await loadApp();
+  await seedTwoSchools(w);
+  for (const [tab, id] of [['students', '#student-school-filter'],
+                           ['schedule', '#caseload-school-filter']]) {
+    await w.SLP.ui.go({ tab });
+    const el = w.document.querySelector(id);
+    const box = el.getBoundingClientRect();
+    const container = el.closest('.student-filters').getBoundingClientRect();
+    assert(box.width > 0, id + ' is actually laid out');
+    // 1px of tolerance for sub-pixel rounding; anything real is tens of pixels.
+    assert(box.right <= container.right + 1,
+           id + ' overflows its container by ' + (box.right - container.right) + 'px');
+  }
+});

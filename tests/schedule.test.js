@@ -300,3 +300,160 @@ test('editing one student does not open an edit box on another', async () => {
   assert(doc.querySelector('[data-student-id="' + ada.id + '"] #edit-student-school'),
          'and it is the row she clicked');
 });
+
+// ---------------------------------------------------------------------------
+// Caseload filters. The caseload used to render every active student, which is
+// fine at 14 and a wall at 49. It gets the same three filters the Students tab
+// has — the same component, so the two can never drift apart on what a filter
+// means — but its OWN state, so narrowing one tab never narrows the other.
+// ---------------------------------------------------------------------------
+
+function caseloadNames(doc) {
+  return Array.from(doc.querySelectorAll('#caseload-list .student-row'))
+    .map(r => r.dataset.studentName);
+}
+
+test('the caseload offers the same three filters as the students list', async () => {
+  const w = await loadApp();
+  await seedStudent(w, 'Ada', '3', 'Lincoln Elementary');
+  const doc = await openSchedule(w);
+  assert(doc.querySelector('#caseload-search'), 'a search box');
+  assert(doc.querySelector('#caseload-grade-filter'), 'a grade filter');
+  assert(doc.querySelector('#caseload-school-filter'), 'a school filter');
+});
+
+test('searching the caseload narrows it', async () => {
+  const w = await loadApp();
+  for (const n of ['Ada', 'Bo', 'Cy']) await seedStudent(w, n, '', '');
+  const doc = await openSchedule(w);
+  fill(doc, '#caseload-search', 'b');
+  await w.SLP.ui.render();
+  eq(caseloadNames(doc), ['Bo'], 'case-insensitive substring match');
+});
+
+test('the caseload grade filter narrows it', async () => {
+  const w = await loadApp();
+  await seedStudent(w, 'Ada', '3', '');
+  await seedStudent(w, 'Bo', '7', '');
+  const doc = await openSchedule(w);
+  fill(doc, '#caseload-grade-filter', '3');
+  await w.SLP.ui.render();
+  eq(caseloadNames(doc), ['Ada'], 'only the third grader');
+});
+
+test('the caseload school filter narrows it', async () => {
+  const w = await loadApp();
+  await seedStudent(w, 'Ada', '', 'Lincoln Elementary');
+  await seedStudent(w, 'Bo', '', 'Roosevelt Middle');
+  const doc = await openSchedule(w);
+  fill(doc, '#caseload-school-filter', 'Lincoln Elementary');
+  await w.SLP.ui.render();
+  eq(caseloadNames(doc), ['Ada'], 'only the Lincoln student');
+});
+
+// The difference that matters between "nobody is on the caseload" and "nobody
+// matches what you typed": the second is undone by clearing a box, and saying
+// so is what stops her thinking her caseload has vanished.
+test('a caseload filter that excludes everyone says so', async () => {
+  const w = await loadApp();
+  await seedStudent(w, 'Ada', '3', 'Lincoln Elementary');
+  const doc = await openSchedule(w);
+  fill(doc, '#caseload-search', 'zzz');
+  await w.SLP.ui.render();
+  eq(caseloadNames(doc), [], 'nobody is listed');
+  assert(/no matching students/i.test(doc.querySelector('#caseload-list').textContent),
+         'and it says why');
+});
+
+test('an empty caseload still says the caseload is empty, not that nothing matched', async () => {
+  const w = await loadApp();
+  const doc = await openSchedule(w);
+  assert(/no students on the caseload/i.test(doc.querySelector('#caseload-list').textContent),
+         'the empty-caseload message survives the filters');
+});
+
+// The whole reason each tab keeps its own state. She filters the caseload to
+// one school to fix a grade, switches to Students to chart someone from another
+// school, and finds them missing — that would be worse than no filters at all.
+test('filtering the caseload leaves the students list alone', async () => {
+  const w = await loadApp();
+  await seedStudent(w, 'Ada', '', 'Lincoln Elementary');
+  await seedStudent(w, 'Bo', '', 'Roosevelt Middle');
+  const doc = await openSchedule(w);
+  fill(doc, '#caseload-school-filter', 'Lincoln Elementary');
+  await w.SLP.ui.render();
+  eq(caseloadNames(doc), ['Ada'], 'the caseload is narrowed');
+  await w.SLP.ui.go({ tab: 'students' });
+  const names = Array.from(doc.querySelectorAll('#student-list .student-row'))
+    .map(r => r.dataset.studentName);
+  eq(names, ['Ada', 'Bo'], 'the students list is untouched');
+  eq(doc.querySelector('#student-school-filter').value, '', 'and its own control is clear');
+});
+
+test('filtering the students list leaves the caseload alone', async () => {
+  const w = await loadApp();
+  await seedStudent(w, 'Ada', '', 'Lincoln Elementary');
+  await seedStudent(w, 'Bo', '', 'Roosevelt Middle');
+  await w.SLP.ui.go({ tab: 'students' });
+  const doc = w.document;
+  fill(doc, '#student-school-filter', 'Lincoln Elementary');
+  await w.SLP.ui.render();
+  await openSchedule(w);
+  eq(caseloadNames(doc), ['Ada', 'Bo'], 'the caseload is untouched');
+  eq(doc.querySelector('#caseload-school-filter').value, '', 'and its own control is clear');
+});
+
+// draft.filters sits beside draft.studentIds and draft.editingId for the same
+// reason: render() rebuilds the DOM, so anything typed has to outlive it.
+test('a caseload filter survives a re-render', async () => {
+  const w = await loadApp();
+  await seedStudent(w, 'Ada', '', 'Lincoln Elementary');
+  await seedStudent(w, 'Bo', '', 'Roosevelt Middle');
+  const doc = await openSchedule(w);
+  fill(doc, '#caseload-school-filter', 'Lincoln Elementary');
+  await w.SLP.ui.render();
+  await w.SLP.ui.render();
+  eq(caseloadNames(doc), ['Ada'], 'still narrowed');
+  eq(doc.querySelector('#caseload-school-filter').value, 'Lincoln Elementary',
+     'and the control still shows it');
+});
+
+// Same rule the Students tab follows, for the same reason: a filter pointing at
+// a school nobody is in any more reads as an empty caseload with no way back.
+test('a caseload filter whose school no longer exists lets go', async () => {
+  const w = await loadApp();
+  const ada = await seedStudent(w, 'Ada', '', 'Lincoln Elementary');
+  await seedStudent(w, 'Bo', '', 'Roosevelt Middle');
+  const doc = await openSchedule(w);
+  fill(doc, '#caseload-school-filter', 'Lincoln Elementary');
+  await w.SLP.ui.render();
+  await w.SLP.store.updateStudentDetails(ada.id, { school: 'Roosevelt Middle' });
+  await w.SLP.ui.render();
+  eq(caseloadNames(doc), ['Ada', 'Bo'], 'the caseload comes back');
+  eq(doc.querySelector('#caseload-school-filter').value, '', 'and the control agrees');
+});
+
+// The caseload lists active students only, so a former student's school is an
+// option that could never match — the same dead end the Students tab avoids.
+test('the caseload school filter offers only the schools of active students', async () => {
+  const w = await loadApp();
+  await seedStudent(w, 'Ada', '', 'Lincoln Elementary');
+  const gone = await seedStudent(w, 'Gus', '', 'Jefferson Elementary');
+  await w.SLP.store.setStudentActive(gone.id, false);
+  const doc = await openSchedule(w);
+  const opts = Array.from(doc.querySelectorAll('#caseload-school-filter option')).map(o => o.value);
+  eq(opts, ['', 'Lincoln Elementary'], 'the former student\'s school is not offered');
+});
+
+// Filtering must not hide the parts of the panel that are not the list.
+test('the caseload keeps its add form and former-students note while filtered', async () => {
+  const w = await loadApp();
+  await seedStudent(w, 'Ada', '', 'Lincoln Elementary');
+  const gone = await seedStudent(w, 'Gus', '', 'Lincoln Elementary');
+  await w.SLP.store.setStudentActive(gone.id, false);
+  const doc = await openSchedule(w);
+  fill(doc, '#caseload-search', 'zzz');
+  await w.SLP.ui.render();
+  assert(doc.querySelector('#new-student-name'), 'the add form is still there');
+  assert(doc.querySelector('#inactive-note'), 'and so is the former-students note');
+});

@@ -80,11 +80,17 @@
   /* Search and grade share a row; the school select takes its own so long school names
      stay readable — a truncated one can't be told apart from a near-identical typo. */
   .student-filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-  .student-filters #student-search { flex: 1; min-width: 0; }
-  /* min-width:0 is load-bearing: without it the select claims its longest option's width
-     and overflows the 250px column onto the detail pane. The closed label ellipsises, but
-     the open list still shows every school in full, which is where a typo is spotted. */
-  .student-filters #student-school-filter { flex-basis: 100%; min-width: 0; max-width: 100%; }
+  .student-filters .search-filter { flex: 1; min-width: 0; }
+  /* Both min-width:0 and max-width:100% are here to stop the select claiming its longest
+     option's width and overflowing the 250px column onto the detail pane. Measured 2026-08-25:
+     either one alone is enough today (drop both and the select goes 526px wide in a 250px
+     column), so neither can be removed on the grounds that the other is doing the work —
+     that reasoning deletes the first and then the second. The closed label ellipsises, but
+     the open list still shows every school in full, which is where a typo is spotted.
+     Scoped by class, not id, so BOTH lists are covered — the caseload panel is wider and
+     does not overflow today, but "wide enough right now" is how this got in the first
+     time, and the widest school name is her data, not ours. shell.test.js measures it. */
+  .student-filters .school-filter { flex-basis: 100%; min-width: 0; max-width: 100%; }
   .goal-block { border: 1px solid var(--line); border-radius: 8px; padding: 12px;
                 margin-bottom: 16px; }
   .goal-text { font-size: 14px; margin: 0 0 8px; }
@@ -1080,7 +1086,59 @@ SLP.ui = (() => {
       }));
   }
 
-  return { $, $$, clear, h, route, go, render, views, toast, todayStr, gradeSelect };
+  // The one filtered student list. Both tabs narrow the same way — same search,
+  // same grade picker, same school select, composed the same — so they can never
+  // drift apart on what a filter means, the same argument gradeSelect above makes.
+  //
+  // What this deliberately does NOT own is the state: each caller passes its own
+  // object in. That is what keeps the tabs independent — filtering the caseload
+  // down to one school must not empty the Students tab out from under her.
+  function studentFilters({ idPrefix, state, students, onChange }) {
+    // Derived from the students handed in, not from every record: a school nobody
+    // in this particular list attends could never match, so offering it is a dead end.
+    const schools = SLP.derive.schools(students);
+    // Editing the last student out of a school strands a filter pointing at it. Letting
+    // go is the only honest move — the alternative is an empty list beside a blank
+    // select, which reads as "everyone is gone" with no obvious way back.
+    if (state.schoolFilter && !schools.includes(state.schoolFilter)) state.schoolFilter = '';
+
+    const q = (state.search || '').trim().toLowerCase();
+    // Every filter is a narrowing, so they compose as AND and an empty one constrains
+    // nothing. She can search a name within a grade without either fighting the other.
+    const shown = students.filter(s =>
+      (!q || s.name.toLowerCase().includes(q)) &&
+      (!state.gradeFilter || String(s.grade || '') === state.gradeFilter) &&
+      (!state.schoolFilter || s.school === state.schoolFilter));
+
+    // The ids stay caller-specific because her tests, and the CSS below, address
+    // individual controls; the classes are what the shared styling hangs off.
+    const search = h('input', { type: 'text', id: idPrefix + '-search', class: 'search-filter',
+                                placeholder: 'Search…', value: state.search || '' });
+    search.addEventListener('input', async () => { state.search = search.value; await onChange(); });
+
+    const grade = gradeSelect(idPrefix + '-grade-filter', state.gradeFilter, 'Any grade');
+    grade.addEventListener('change', async () => {
+      state.gradeFilter = grade.value;
+      await onChange();
+    });
+
+    const school = h('select', { id: idPrefix + '-school-filter', class: 'school-filter' },
+      h('option', { value: '', text: 'Any school' }),
+      schools.map(name => {
+        const opt = h('option', { value: name, text: name });
+        if (name === state.schoolFilter) opt.selected = true;
+        return opt;
+      }));
+    school.addEventListener('change', async () => {
+      state.schoolFilter = school.value;
+      await onChange();
+    });
+
+    return { el: h('div', { class: 'student-filters' }, search, grade, school), shown };
+  }
+
+  return { $, $$, clear, h, route, go, render, views, toast, todayStr, gradeSelect,
+           studentFilters };
 })();
 
 // ============================================================
@@ -1091,7 +1149,11 @@ SLP.ui = (() => {
   const { h, go, toast } = SLP.ui;
   const DAYS = [[1, 'Monday'], [2, 'Tuesday'], [3, 'Wednesday'], [4, 'Thursday'], [5, 'Friday']];
 
-  const draft = { studentIds: new Set(), editingId: null };  // survives re-render within the tab
+  // survives re-render within the tab. filters is this tab's own, deliberately not shared
+  // with the Students tab: narrowing the caseload to fix one school's grades must not
+  // quietly hide everyone else from the tab where she charts progress.
+  const draft = { studentIds: new Set(), editingId: null,
+                  filters: { search: '', gradeFilter: '', schoolFilter: '' } };
 
   // Name, then whichever of grade and school she has filled in. Built by dropping the
   // blanks rather than by appending, so a missing one never leaves a separator dangling.
@@ -1121,11 +1183,21 @@ SLP.ui = (() => {
     const active = students.filter(s => s.active);
     const schools = SLP.derive.schools(students);
 
+    // Filters over the active students only, so they match what the list actually shows.
+    const filters = SLP.ui.studentFilters({
+      idPrefix: 'caseload', state: draft.filters, students: active,
+      onChange: () => SLP.ui.render(),
+    });
+
     const list = h('div', { id: 'caseload-list' });
     if (!active.length) {
       list.appendChild(h('p', { class: 'muted', text: 'No students on the caseload yet.' }));
+    } else if (!filters.shown.length) {
+      // Distinct from the message above on purpose: this one is undone by clearing a
+      // box, and saying so is what stops her reading it as a vanished caseload.
+      list.appendChild(h('p', { class: 'muted', text: 'No matching students.' }));
     }
-    for (const s of active) {
+    for (const s of filters.shown) {
       const row = h('div', { class: 'student-row', 'data-student-id': s.id,
                              'data-student-name': s.name });
       if (draft.editingId === s.id) {
@@ -1180,6 +1252,7 @@ SLP.ui = (() => {
 
     return h('section', { class: 'panel', id: 'caseload-editor' },
       h('h2', { text: 'Caseload' }),
+      filters.el,
       list,
       h('div', { class: 'row-form', style: 'margin-top:10px' },
         name, grade, school, schoolList,
@@ -1464,42 +1537,13 @@ SLP.ui = (() => {
 
   SLP.ui.views.students = async (root) => {
     const students = await SLP.store.listStudents({ activeOnly: true });
-    // Derived from the students on screen, not from every record: this list is active-only,
-    // so a former student's school could never match and would just be a dead option.
-    const schools = SLP.derive.schools(students);
-    // Editing the last student out of a school strands a filter pointing at it. Letting go
-    // is the only honest move — the alternative is an empty caseload beside a blank select.
-    if (ui.schoolFilter && !schools.includes(ui.schoolFilter)) ui.schoolFilter = '';
-
-    const q = ui.search.trim().toLowerCase();
-    // Every filter is a narrowing, so they compose as AND and an empty one constrains
-    // nothing. She can search a name within a grade without either fighting the other.
-    const shown = students.filter(s =>
-      (!q || s.name.toLowerCase().includes(q)) &&
-      (!ui.gradeFilter || String(s.grade || '') === ui.gradeFilter) &&
-      (!ui.schoolFilter || s.school === ui.schoolFilter));
-
-    const search = h('input', { type: 'text', id: 'student-search', placeholder: 'Search…',
-                                value: ui.search });
-    search.addEventListener('input', async () => { ui.search = search.value; await SLP.ui.render(); });
-
-    const gradeFilter = SLP.ui.gradeSelect('student-grade-filter', ui.gradeFilter, 'Any grade');
-    gradeFilter.addEventListener('change', async () => {
-      ui.gradeFilter = gradeFilter.value;
-      await SLP.ui.render();
+    // Active-only, so the filters see only the students on screen — a former student's
+    // school is never offered here. The state is this tab's own `ui`, which is what
+    // keeps it from moving when she filters the caseload over on the Schedule tab.
+    const filters = SLP.ui.studentFilters({
+      idPrefix: 'student', state: ui, students, onChange: () => SLP.ui.render(),
     });
-
-    const schoolFilter = h('select', { id: 'student-school-filter' },
-      h('option', { value: '', text: 'Any school' }),
-      schools.map(name => {
-        const opt = h('option', { value: name, text: name });
-        if (name === ui.schoolFilter) opt.selected = true;
-        return opt;
-      }));
-    schoolFilter.addEventListener('change', async () => {
-      ui.schoolFilter = schoolFilter.value;
-      await SLP.ui.render();
-    });
+    const shown = filters.shown;
 
     const list = h('div', { id: 'student-list' },
       shown.length ? null : h('p', { class: 'muted', text: 'No matching students.' }),
@@ -1517,7 +1561,7 @@ SLP.ui = (() => {
     else detail.appendChild(h('p', { class: 'empty', text: 'Pick a student to see their goals.' }));
 
     root.appendChild(h('div', { class: 'split' },
-      h('div', {}, h('div', { class: 'student-filters' }, search, gradeFilter, schoolFilter), list),
+      h('div', {}, filters.el, list),
       detail));
   };
 

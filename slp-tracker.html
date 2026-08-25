@@ -156,7 +156,7 @@
 // SLP Session Tracker — one file, no build step, no network.
 // Sections below are ordered by dependency; each only uses those above it.
 // ============================================================
-window.SLP = { version: '1.0.0' };
+window.SLP = { version: '1.1.0' };
 
 // ============================================================
 // SECTION: db — IndexedDB access. Knows stores, not meaning.
@@ -356,8 +356,28 @@ SLP.model = (() => {
   const displayText = (text, studentName) =>
     String(text || '').split('STUDENT').join(studentName || 'STUDENT');
 
+  // The stored value is the plain number so grades stay sortable and records written
+  // before this list existed still read correctly; the ordinal lives only in the label.
+  // Pre-K and kindergarten carry no "grade" word — "grade Pre-K" is not how anyone says it.
+  const ORDINALS = ['1st', '2nd', '3rd', '4th', '5th', '6th',
+                    '7th', '8th', '9th', '10th', '11th', '12th'];
+  const GRADES = Object.freeze([
+    Object.freeze({ value: 'PK', label: 'Pre-K' }),
+    Object.freeze({ value: 'K', label: 'Kindergarten' }),
+    ...ORDINALS.map((ord, i) => Object.freeze({ value: String(i + 1), label: ord + ' grade' })),
+  ]);
+
+  // An unrecognised grade shows itself rather than vanishing — a record is never
+  // silently emptied on screen just because its value is off the list.
+  function gradeLabel(value) {
+    if (!value) return '';
+    const found = GRADES.find(g => g.value === String(value));
+    return found ? found.label : String(value);
+  }
+
   return {
     uid, now, field, presetTrials, seedValues, setValue, hasEnteredData, ratio, displayText,
+    GRADES, gradeLabel,
 
     student: ({ name, grade = '', school = '', background = '' }) => ({
       id: uid('s'), name, grade, school, background,
@@ -460,6 +480,16 @@ SLP.store = (() => {
       const s = await db.get('students', id);
       if (!s) return null;
       s.active = active; s.updatedAt = m.now();
+      return db.put('students', s);
+    },
+    // A typo'd school would otherwise sit in her dropdown forever, so the two fields
+    // she picks from a list are the two she can correct. Everything else is untouched.
+    async updateStudentDetails(id, { grade, school }) {
+      const s = await db.get('students', id);
+      if (!s) return null;
+      if (grade !== undefined) s.grade = grade;
+      if (school !== undefined) s.school = school;
+      s.updatedAt = m.now();
       return db.put('students', s);
     },
 
@@ -705,7 +735,30 @@ SLP.derive = (() => {
     return { met, of: recent.length, window, mastered: recent.length === window && met === window };
   }
 
-  return { studentState, chartedCount, series, mastery, pair };
+  // Her schools are not a table — they are whatever her students say they are, so a
+  // school appears the moment she types it and leaves once no student is left using it.
+  // Former students count: their school is still a real school she works at.
+  function schools(students) {
+    const byKey = new Map();                       // lowercased name -> first spelling seen
+    for (const s of students || []) {
+      const name = String(s.school || '').trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (!byKey.has(key)) byKey.set(key, name);
+    }
+    return [...byKey.values()].sort((a, b) => a.localeCompare(b));
+  }
+
+  // Typing "lincoln elementary" under an existing "Lincoln Elementary" must not fork the
+  // list into two schools, so a case-insensitive hit stores the spelling already on file.
+  function canonicalSchool(known, typed) {
+    const name = String(typed || '').trim();
+    if (!name) return '';
+    const key = name.toLowerCase();
+    return (known || []).find(k => String(k).toLowerCase() === key) || name;
+  }
+
+  return { studentState, chartedCount, series, mastery, pair, schools, canonicalSchool };
 })();
 
 // ============================================================
@@ -976,20 +1029,72 @@ SLP.ui = (() => {
   const { h, go, toast } = SLP.ui;
   const DAYS = [[1, 'Monday'], [2, 'Tuesday'], [3, 'Wednesday'], [4, 'Thursday'], [5, 'Friday']];
 
-  const draft = { studentIds: new Set() };   // survives re-render within the tab
+  const draft = { studentIds: new Set(), editingId: null };  // survives re-render within the tab
+
+  const rowLabel = s => s.name + (s.grade ? ' · ' + SLP.model.gradeLabel(s.grade) : '');
+
+  // One grade picker and one school box, built the same way wherever they appear, so the
+  // add form and the edit row can never drift apart on what a grade or a school is.
+  function gradeSelect(id, value) {
+    return h('select', { id },
+      h('option', { value: '', text: 'Grade' }),          // grade stays optional
+      SLP.model.GRADES.map(g => {
+        const opt = h('option', { value: g.value, text: g.label });
+        if (String(value || '') === g.value) opt.selected = true;
+        return opt;
+      }));
+  }
+
+  // A native datalist, not a hand-rolled combobox: she gets type-to-filter and the full
+  // list from the caret for free, and anything she types that is new is simply accepted.
+  function schoolBox(id, listId, value, schools) {
+    return [
+      h('input', { type: 'text', id, list: listId, placeholder: 'School',
+                   value: value || '', autocomplete: 'off' }),
+      h('datalist', { id: listId }, schools.map(name => h('option', { value: name }))),
+    ];
+  }
 
   async function caseloadPanel() {
     const students = await SLP.store.listStudents({});
     const active = students.filter(s => s.active);
+    const schools = SLP.derive.schools(students);
 
     const list = h('div', { id: 'caseload-list' });
     if (!active.length) {
       list.appendChild(h('p', { class: 'muted', text: 'No students on the caseload yet.' }));
     }
     for (const s of active) {
-      list.appendChild(
-        h('div', { class: 'student-row', 'data-student-id': s.id, 'data-student-name': s.name },
-          h('span', { class: 'grow', text: s.name + (s.grade ? ' · grade ' + s.grade : '') }),
+      const row = h('div', { class: 'student-row', 'data-student-id': s.id,
+                             'data-student-name': s.name });
+      if (draft.editingId === s.id) {
+        const grade = gradeSelect('edit-student-grade', s.grade);
+        const [school, schoolList] = schoolBox('edit-student-school', 'edit-school-options',
+                                               s.school, schools);
+        row.append(
+          h('span', { class: 'grow', text: s.name }), grade, school, schoolList,
+          h('button', {
+            class: 'primary', id: 'save-student', type: 'button', text: 'Save',
+            'on:click': async () => {
+              await SLP.store.updateStudentDetails(s.id, {
+                grade: grade.value,
+                school: SLP.derive.canonicalSchool(schools, school.value),
+              });
+              draft.editingId = null;
+              await SLP.ui.render();
+            },
+          }),
+          h('button', {
+            class: 'linkish', id: 'cancel-student-edit', type: 'button', text: 'Cancel',
+            'on:click': async () => { draft.editingId = null; await SLP.ui.render(); },
+          }));
+      } else {
+        row.append(
+          h('span', { class: 'grow', text: rowLabel(s) }),
+          h('button', {
+            class: 'linkish edit-student', type: 'button', text: 'Edit',
+            'on:click': async () => { draft.editingId = s.id; await SLP.ui.render(); },
+          }),
           h('button', {
             class: 'linkish toggle-active', type: 'button', text: 'Remove from caseload',
             'on:click': async () => {
@@ -997,7 +1102,9 @@ SLP.ui = (() => {
               toast(s.name + ' removed from the caseload. Their history is kept.', 'ok');
               await SLP.ui.render();
             },
-          })));
+          }));
+      }
+      list.appendChild(row);
     }
     const inactive = students.filter(s => !s.active);
     if (inactive.length) {
@@ -1007,21 +1114,21 @@ SLP.ui = (() => {
     }
 
     const name = h('input', { type: 'text', id: 'new-student-name', placeholder: 'Student name' });
-    const grade = h('input', { type: 'text', id: 'new-student-grade', placeholder: 'Grade',
-                               style: 'width:70px' });
-    const school = h('input', { type: 'text', id: 'new-student-school', placeholder: 'School' });
+    const grade = gradeSelect('new-student-grade', '');
+    const [school, schoolList] = schoolBox('new-student-school', 'school-options', '', schools);
 
     return h('section', { class: 'panel', id: 'caseload-editor' },
       h('h2', { text: 'Caseload' }),
       list,
       h('div', { class: 'row-form', style: 'margin-top:10px' },
-        name, grade, school,
+        name, grade, school, schoolList,
         h('button', {
           class: 'primary', id: 'add-student', type: 'button', text: 'Add student',
           'on:click': async () => {
             if (!name.value.trim()) { toast('A student needs a name.', 'warn'); return; }
             await SLP.store.saveStudent(SLP.model.student({
-              name: name.value.trim(), grade: grade.value.trim(), school: school.value.trim(),
+              name: name.value.trim(), grade: grade.value,
+              school: SLP.derive.canonicalSchool(schools, school.value),
             }));
             await SLP.ui.render();
           },
@@ -1259,7 +1366,8 @@ SLP.ui = (() => {
   async function renderDetail(container, student) {
     const refresh = () => SLP.ui.render();
     const detail = h('div', { id: 'student-detail' },
-      h('h2', { text: student.name + (student.grade ? ' · grade ' + student.grade : '') }));
+      h('h2', { text: student.name +
+                      (student.grade ? ' · ' + SLP.model.gradeLabel(student.grade) : '') }));
 
     const blocks = await SLP.store.objectivesForStudent(student.id);
     if (!blocks.length) {

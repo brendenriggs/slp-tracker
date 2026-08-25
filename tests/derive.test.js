@@ -143,3 +143,70 @@ test('mastery is null for an objective with no criterion pair', async () => {
   eq(m && w.SLP.derive.mastery(obj, [{ date: '2026-09-07', dp }]), null,
      'no pair, no criterion, no mastery claim');
 });
+
+function withSchool(w, name, school, active = true) {
+  const s = w.SLP.model.student({ name, school });
+  s.active = active;
+  return s;
+}
+
+test('the school list is drawn from the students themselves', async () => {
+  const w = await loadApp();
+  const schools = w.SLP.derive.schools([
+    withSchool(w, 'Ada', 'Lincoln Elementary'),
+    withSchool(w, 'Bo', 'Roosevelt Middle'),
+  ]);
+  eq(schools.join('|'), 'Lincoln Elementary|Roosevelt Middle', 'both, sorted');
+});
+
+test('a school used twice is offered once', async () => {
+  const w = await loadApp();
+  const schools = w.SLP.derive.schools([
+    withSchool(w, 'Ada', 'Lincoln Elementary'),
+    withSchool(w, 'Bo', 'Lincoln Elementary'),
+  ]);
+  eq(schools.length, 1, 'one entry, not one per student');
+});
+
+test('the same school typed in a different case is not a second school', async () => {
+  const w = await loadApp();
+  const schools = w.SLP.derive.schools([
+    withSchool(w, 'Ada', 'Lincoln Elementary'),
+    withSchool(w, 'Bo', 'lincoln elementary'),
+  ]);
+  eq(schools.join('|'), 'Lincoln Elementary', 'the first spelling stands');
+});
+
+test('students with no school contribute nothing to the list', async () => {
+  const w = await loadApp();
+  const schools = w.SLP.derive.schools([
+    withSchool(w, 'Ada', ''),
+    withSchool(w, 'Bo', '   '),
+    withSchool(w, 'Cy', 'Lincoln Elementary'),
+  ]);
+  eq(schools.join('|'), 'Lincoln Elementary', 'no blank option in her dropdown');
+});
+
+test('a former student keeps their school on the list', async () => {
+  const w = await loadApp();
+  const schools = w.SLP.derive.schools([
+    withSchool(w, 'Ada', 'Roosevelt Middle', false),
+  ]);
+  eq(schools.join('|'), 'Roosevelt Middle', 'the school outlives the caseload');
+});
+
+test('a school she types back in matches the spelling already on file', async () => {
+  const w = await loadApp();
+  const known = ['Lincoln Elementary', 'Roosevelt Middle'];
+  eq(w.SLP.derive.canonicalSchool(known, 'lincoln ELEMENTARY'), 'Lincoln Elementary',
+     'snaps to what is already stored');
+  eq(w.SLP.derive.canonicalSchool(known, '  Roosevelt Middle  '), 'Roosevelt Middle',
+     'stray whitespace does not make a new school');
+});
+
+test('a school she has never used before is kept exactly as typed', async () => {
+  const w = await loadApp();
+  eq(w.SLP.derive.canonicalSchool(['Lincoln Elementary'], '  Jefferson High '),
+     'Jefferson High', 'new schools are trimmed but not otherwise touched');
+  eq(w.SLP.derive.canonicalSchool([], ''), '', 'no school stays no school');
+});

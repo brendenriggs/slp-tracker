@@ -178,3 +178,40 @@ test('uid produces unique prefixed ids', async () => {
   eq(ids.size, 500, 'no collisions');
   assert([...ids].every(id => id.startsWith('s_')), 'ids carry their prefix');
 });
+
+test('the grade vocabulary runs Pre-K through 12th', async () => {
+  const w = await loadApp();
+  const grades = w.SLP.model.GRADES;
+  eq(grades.length, 14, 'Pre-K, K, and twelve numbered grades');
+  eq(grades[0].value, 'PK', 'Pre-K leads');
+  eq(grades[1].value, 'K', 'kindergarten second');
+  eq(grades[13].value, '12', 'twelfth last');
+  eq(grades.filter(g => !g.value || !g.label).length, 0, 'every grade has a value and a label');
+});
+
+test('a numbered grade is stored as its number, not its ordinal', async () => {
+  const w = await loadApp();
+  const third = w.SLP.model.GRADES.find(g => g.label === '3rd grade');
+  assert(third, 'third grade is offered');
+  eq(third.value, '3', 'the number is what lands on the record');
+});
+
+test('grade labels read as prose, with the word grade only where it fits', async () => {
+  const w = await loadApp();
+  const label = w.SLP.model.gradeLabel;
+  eq(label('PK'), 'Pre-K', 'no "grade" on Pre-K');
+  eq(label('K'), 'Kindergarten', 'no "grade" on kindergarten');
+  eq(label('1'), '1st grade', 'first is ordinal');
+  eq(label('2'), '2nd grade', 'second is ordinal');
+  eq(label('3'), '3rd grade', 'third is ordinal');
+  eq(label('11'), '11th grade', 'eleventh is not 11st');
+  eq(label('12'), '12th grade', 'twelfth is ordinal');
+});
+
+test('an unrecognised grade shows itself rather than vanishing', async () => {
+  const w = await loadApp();
+  const label = w.SLP.model.gradeLabel;
+  eq(label('transition'), 'transition', 'an unknown value survives to the screen');
+  eq(label(''), '', 'no grade renders as nothing');
+  eq(label(undefined), '', 'a missing grade renders as nothing');
+});

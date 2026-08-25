@@ -229,3 +229,19 @@ test('objective deletion needs the second click', async () => {
   eq((await w.SLP.store.objectivesFor(obj.goalId)).length, 1,
      'one click only arms it — this destroys collected data');
 });
+
+test('the student heading names a grade the way she would say it', async () => {
+  const w = await loadApp();
+  const ada = w.SLP.model.student({ name: 'Ada', grade: '3' });
+  await w.SLP.store.saveStudent(ada);
+  const doc = await openStudents(w, ada.id);
+  eq(doc.querySelector('h2').textContent, 'Ada · 3rd grade', 'ordinal, not a bare number');
+});
+
+test('the student heading drops the grade when there is none', async () => {
+  const w = await loadApp();
+  const ada = w.SLP.model.student({ name: 'Ada' });
+  await w.SLP.store.saveStudent(ada);
+  const doc = await openStudents(w, ada.id);
+  eq(doc.querySelector('h2').textContent, 'Ada', 'no dangling separator');
+});

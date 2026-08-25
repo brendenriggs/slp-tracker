@@ -179,3 +179,36 @@ test('slots are sorted by day then start time', async () => {
   eq((await st.listSlots()).map(s => s.dayOfWeek + '@' + s.startTime),
      ['1@09:00', '1@13:00', '3@09:00'], 'schedule reading order');
 });
+
+test('a student grade and school can be corrected after they are added', async () => {
+  const w = await loadApp();
+  const m = w.SLP.model, st = w.SLP.store;
+  const ada = m.student({ name: 'Ada', grade: '3', school: 'Lincon Elementary' });
+  await st.saveStudent(ada);
+  await st.updateStudentDetails(ada.id, { grade: '4', school: 'Lincoln Elementary' });
+  const saved = (await st.listStudents({}))[0];
+  eq(saved.grade, '4', 'the new grade stuck');
+  eq(saved.school, 'Lincoln Elementary', 'the typo is gone');
+});
+
+test('correcting a student leaves the rest of their record alone', async () => {
+  const w = await loadApp();
+  const m = w.SLP.model, st = w.SLP.store;
+  const ada = m.student({ name: 'Ada', grade: '3', school: 'Lincoln Elementary',
+                          background: 'Loves trains' });
+  await st.saveStudent(ada);
+  await st.setStudentActive(ada.id, false);
+  await st.updateStudentDetails(ada.id, { grade: '4', school: 'Roosevelt Middle' });
+  const saved = (await st.listStudents({}))[0];
+  eq(saved.name, 'Ada', 'the name is untouched');
+  eq(saved.background, 'Loves trains', 'the background is untouched');
+  eq(saved.active, false, 'editing a former student does not put them back on the caseload');
+  eq(saved.id, ada.id, 'still the same record');
+});
+
+test('correcting a student who is gone changes nothing', async () => {
+  const w = await loadApp();
+  eq(await w.SLP.store.updateStudentDetails('s_nobody', { grade: '4', school: 'X' }), null,
+     'a missing student reports itself rather than creating one');
+  eq((await w.SLP.store.listStudents({})).length, 0, 'and nothing was written');
+});

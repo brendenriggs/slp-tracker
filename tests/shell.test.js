@@ -109,6 +109,68 @@ test('the school filter carries the rule that keeps it inside its column', async
 // still preferred over nowrap: with wrap the long name keeps its line and the controls
 // drop below it (h2 663px); with nowrap the name is squeezed to 288px instead.
 
+// Every handler ends in refresh() → render(), and doRender() clears #app down to nothing
+// before rebuilding. Nothing on the page is its own scroll container, so the document is
+// what scrolls — and an empty document is viewport-tall, which makes the browser clamp
+// the scroll offset to 0 on the way through. She marks a goal near the bottom of a long
+// student and gets thrown back to the header.
+async function seedTallStudent(w) {
+  const m = w.SLP.model, st = w.SLP.store;
+  const ada = m.student({ name: 'Ada' });
+  await st.saveStudent(ada);
+  for (let i = 0; i < 12; i++) {
+    await st.saveGoal(m.goal({
+      studentId: ada.id, order: i,
+      text: 'STUDENT will produce target sounds in structured conversation ' + i,
+    }));
+  }
+  return ada;
+}
+
+test('clicking something keeps her place on the page', async () => {
+  const w = await loadApp();
+  const ada = await seedTallStudent(w);
+  await w.SLP.ui.go({ tab: 'students', studentId: ada.id });
+
+  assert(w.document.documentElement.scrollHeight > w.innerHeight + 200,
+         'the page must be taller than the frame or this test measures nothing');
+  w.scrollTo(0, 300);
+  eq(w.scrollY, 300, 'scrolled down to where she is working');
+
+  w.document.querySelectorAll('.delete-goal')[6].click();
+  await w.SLP.ui.render();
+
+  eq(w.scrollY, 300, 'a re-render must not throw her back to the top');
+});
+
+// The other half of the same rule: going somewhere new is not staying put. Landing on a
+// fresh tab already scrolled down would hide its heading and read as a broken page.
+test('going somewhere new starts at the top', async () => {
+  const w = await loadApp();
+  const ada = await seedTallStudent(w);
+  // The destination has to be tall too. A short Schedule tab would clamp to 0 on its own
+  // and the test would pass with no reset logic at all — measured 2026-08-25, an empty
+  // Schedule is well under one frame.
+  // All on one day: the week grid is columns, so height follows the longest column, not
+  // the total. Spread across five days, 20 slots only reached 903px in an 800px frame.
+  for (let i = 0; i < 30; i++) {
+    await w.SLP.store.saveSlot(w.SLP.model.slot({
+      dayOfWeek: 1, startTime: '09:00', endTime: '09:30',
+      studentIds: [ada.id], location: 'Room ' + i,
+    }));
+  }
+  await w.SLP.ui.go({ tab: 'students', studentId: ada.id });
+  w.scrollTo(0, 300);
+  eq(w.scrollY, 300, 'scrolled down the student');
+
+  w.document.querySelector('.tab[data-tab="schedule"]').click();
+  await w.SLP.ui.render();
+  assert(w.document.documentElement.scrollHeight > w.innerHeight + 300,
+         'the destination must be tall enough to hold a scroll offset or this proves ' +
+         'nothing — scrollHeight ' + w.document.documentElement.scrollHeight);
+  eq(w.scrollY, 0, 'a different tab is a new place, not the same place');
+});
+
 test('a long school name does not push the filter out of its column', async () => {
   const w = await loadApp();
   await seedTwoSchools(w);

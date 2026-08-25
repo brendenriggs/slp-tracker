@@ -201,7 +201,7 @@
 // SLP Session Tracker — one file, no build step, no network.
 // Sections below are ordered by dependency; each only uses those above it.
 // ============================================================
-window.SLP = { version: '1.4.0' };
+window.SLP = { version: '1.4.1' };
 
 // ============================================================
 // SECTION: db — IndexedDB access. Knows stores, not meaning.
@@ -1087,8 +1087,19 @@ SLP.ui = (() => {
     ['schedule', 'Schedule'],
   ];
 
+  // Every render tears #app down to nothing and rebuilds it, and nothing on the page is
+  // its own scroll container — the document is what scrolls. An empty document is only
+  // viewport-tall, so the browser clamps the offset to 0 on the way through and she is
+  // thrown back to the header on every click. Staying put is right for a re-render in
+  // place; it is wrong for arriving somewhere new, which should start at the top. The
+  // route says which of the two just happened.
+  let lastPlace = null;
+
   async function doRender() {
     const app = $('#app');
+    const place = route.tab + '/' + (route.studentId || '');
+    const y = place === lastPlace ? window.scrollY : 0;
+    lastPlace = place;
     clear(app);
     app.appendChild(
       h('header', { class: 'app-header' },
@@ -1108,6 +1119,8 @@ SLP.ui = (() => {
     const view = views[route.tab];
     if (view) await view(root);
     else root.appendChild(h('p', { class: 'empty', text: 'Nothing here yet.' }));
+
+    window.scrollTo(0, y);
   }
 
   // Coalescing render loop. Two problems this solves at once:

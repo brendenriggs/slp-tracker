@@ -28,6 +28,123 @@
 window.SLP = { version: '0.1.0' };
 
 // ============================================================
+// SECTION: db — IndexedDB access. Knows stores, not meaning.
+// ============================================================
+SLP.db = (() => {
+  const DB_NAME = 'slp-tracker';
+  const DB_VERSION = 1;
+
+  // store name -> index definitions
+  const SCHEMA = {
+    students:   [],
+    goals:      ['studentId'],
+    objectives: ['goalId'],
+    slots:      ['dayOfWeek'],
+    sessions:   ['date', 'slotId'],
+    attendance: ['sessionId', 'studentId'],
+    notes:      ['sessionId', 'studentId'],
+    datapoints: ['sessionId', 'studentId', 'objectiveId'],
+    meta:       [],
+  };
+  const STORES = Object.keys(SCHEMA);
+
+  let dbPromise = null;
+
+  function open() {
+    if (dbPromise) return dbPromise;
+    dbPromise = new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, DB_VERSION);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        for (const [name, indexes] of Object.entries(SCHEMA)) {
+          const os = db.objectStoreNames.contains(name)
+            ? req.transaction.objectStore(name)
+            : db.createObjectStore(name, { keyPath: 'id' });
+          for (const idx of indexes) {
+            if (!os.indexNames.contains(idx)) os.createIndex(idx, idx, { unique: false });
+          }
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+      req.onblocked = () => reject(new Error('IndexedDB upgrade blocked by another tab'));
+    });
+    return dbPromise;
+  }
+
+  // Wraps one transaction; resolves with `result` once the transaction commits,
+  // so callers never read a value that failed to persist.
+  async function tx(storeNames, mode, fn) {
+    const db = await open();
+    return new Promise((resolve, reject) => {
+      const t = db.transaction(storeNames, mode);
+      let result;
+      t.oncomplete = () => resolve(result);
+      t.onerror = () => reject(t.error);
+      t.onabort = () => reject(t.error || new Error('transaction aborted'));
+      result = fn(t);
+      if (result && typeof result.then === 'function') {
+        reject(new Error('transaction callbacks must be synchronous'));
+      }
+    });
+  }
+
+  return {
+    STORES,
+    open,
+
+    async put(store, obj) {
+      await tx(store, 'readwrite', t => { t.objectStore(store).put(obj); });
+      return obj;
+    },
+
+    async get(store, id) {
+      const box = { value: undefined };
+      await tx(store, 'readonly', t => {
+        const r = t.objectStore(store).get(id);
+        r.onsuccess = () => { box.value = r.result; };
+      });
+      return box.value;
+    },
+
+    async getAll(store) {
+      const box = { value: [] };
+      await tx(store, 'readonly', t => {
+        const r = t.objectStore(store).getAll();
+        r.onsuccess = () => { box.value = r.result || []; };
+      });
+      return box.value;
+    },
+
+    async getAllBy(store, indexName, value) {
+      const box = { value: [] };
+      await tx(store, 'readonly', t => {
+        const r = t.objectStore(store).index(indexName).getAll(value);
+        r.onsuccess = () => { box.value = r.result || []; };
+      });
+      return box.value;
+    },
+
+    async del(store, id) {
+      await tx(store, 'readwrite', t => { t.objectStore(store).delete(id); });
+    },
+
+    async bulkPut(store, objs) {
+      await tx(store, 'readwrite', t => {
+        const os = t.objectStore(store);
+        for (const o of objs) os.put(o);
+      });
+    },
+
+    async clearAll() {
+      await tx(STORES, 'readwrite', t => {
+        for (const s of STORES) t.objectStore(s).clear();
+      });
+    },
+  };
+})();
+
+// ============================================================
 // SECTION: boot — wire everything up.
 // ============================================================
 SLP.ready = Promise.resolve();

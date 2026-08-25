@@ -1,0 +1,14 @@
+# OS cruft
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Never commit real session data — this app holds student records.
+slp-data-*.json
+*-backup.json
+data/

@@ -1,0 +1,687 @@
+<title>SLP Session Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap">
+
+<style>
+  :root {
+    --bg:        #F6F7F9;
+    --surface:   #FFFFFF;
+    --ink:       #16202B;
+    --ink-2:     #4A5768;
+    --ink-3:     #7C899A;
+    --rule:      #DFE3E9;
+    --rule-soft: #EDF0F4;
+    --accent:    #22527D;
+    --accent-soft:#E8EFF7;
+    --sage:      #3F6B53;
+    --sage-soft: #E6EFE9;
+    --amber:     #8A5A12;
+    --amber-soft:#FAF0DE;
+    --rose:      #8C3A46;
+    --rose-soft: #F8E9EA;
+
+    --display: "Newsreader", Georgia, "Times New Roman", serif;
+    --body: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:        #10151B;
+      --surface:   #161D26;
+      --ink:       #E4E9EF;
+      --ink-2:     #9FADBD;
+      --ink-3:     #6F7E8F;
+      --rule:      #26313D;
+      --rule-soft: #1D252F;
+      --accent:    #7FB2E5;
+      --accent-soft:#17293A;
+      --sage:      #7FBF9B;
+      --sage-soft: #16281F;
+      --amber:     #D9A75A;
+      --amber-soft:#2A2214;
+      --rose:      #E08C97;
+      --rose-soft: #2B1A1D;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg:        #10151B;
+    --surface:   #161D26;
+    --ink:       #E4E9EF;
+    --ink-2:     #9FADBD;
+    --ink-3:     #6F7E8F;
+    --rule:      #26313D;
+    --rule-soft: #1D252F;
+    --accent:    #7FB2E5;
+    --accent-soft:#17293A;
+    --sage:      #7FBF9B;
+    --sage-soft: #16281F;
+    --amber:     #D9A75A;
+    --amber-soft:#2A2214;
+    --rose:      #E08C97;
+    --rose-soft: #2B1A1D;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 16.5px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 44rem;
+    margin: 0 auto;
+    padding: 0 1.5rem 6rem;
+  }
+
+  /* ---------- masthead ---------- */
+
+  header.masthead {
+    padding: 4.5rem 0 2.25rem;
+    border-bottom: 1px solid var(--rule);
+    display: flex;
+    flex-direction: column;
+    gap: 1.15rem;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 500;
+    font-size: clamp(2.35rem, 6vw, 3.4rem);
+    line-height: 1.08;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .standfirst {
+    font-family: var(--display);
+    font-size: 1.2rem;
+    line-height: 1.55;
+    color: var(--ink-2);
+    max-width: 34rem;
+    margin: 0;
+  }
+
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.5rem;
+    font-family: var(--mono);
+    font-size: 0.74rem;
+    color: var(--ink-3);
+    padding-top: 0.4rem;
+  }
+  .meta b { color: var(--ink-2); font-weight: 500; }
+
+  /* ---------- sections ---------- */
+
+  section { padding-top: 3.25rem; }
+
+  h2 {
+    font-family: var(--display);
+    font-weight: 500;
+    font-size: 1.85rem;
+    line-height: 1.2;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+    margin: 0 0 1.1rem;
+  }
+
+  h3 {
+    font-family: var(--body);
+    font-weight: 600;
+    font-size: 1rem;
+    letter-spacing: 0.005em;
+    margin: 2rem 0 0.6rem;
+  }
+
+  p { margin: 0 0 1.05rem; }
+  p:last-child { margin-bottom: 0; }
+
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  strong { font-weight: 600; color: var(--ink); }
+  em { font-style: italic; }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.85em;
+    background: var(--rule-soft);
+    padding: 0.12em 0.38em;
+    border-radius: 3px;
+    color: var(--ink-2);
+  }
+
+  ul { margin: 0 0 1.05rem; padding-left: 1.15rem; }
+  li { margin-bottom: 0.5rem; }
+  li::marker { color: var(--ink-3); }
+
+  /* ---------- pull quote / key constraint ---------- */
+
+  .keystone {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+    padding: 1.5rem 1.6rem;
+    margin: 1.75rem 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  .keystone .label {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .keystone .line {
+    font-family: var(--display);
+    font-size: 1.45rem;
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+  .keystone p { font-size: 0.95rem; color: var(--ink-2); margin: 0; }
+
+  /* ---------- decision list ---------- */
+
+  .decisions {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+  }
+  .decisions li {
+    margin: 0;
+    padding-left: 1.6rem;
+    position: relative;
+  }
+  .decisions li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.62em;
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 50%;
+    background: var(--sage-soft);
+    border: 1.5px solid var(--sage);
+  }
+  .decisions .head { font-weight: 600; }
+  .decisions .body { color: var(--ink-2); font-size: 0.95rem; display: block; }
+
+  /* ---------- model tree ---------- */
+
+  .tree {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    padding: 1.4rem 1.5rem;
+    margin: 1.5rem 0;
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    line-height: 1.85;
+    overflow-x: auto;
+  }
+  .tree .n { color: var(--ink); font-weight: 500; }
+  .tree .c { color: var(--ink-3); }
+  .tree .g { color: var(--accent); }
+  .tree .pipe { color: var(--rule); }
+
+  /* ---------- screens ---------- */
+
+  .screens {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    margin: 1.5rem 0;
+    border-top: 1px solid var(--rule);
+  }
+  .screen {
+    border-bottom: 1px solid var(--rule);
+    padding: 1.25rem 0;
+    display: grid;
+    grid-template-columns: 8.5rem 1fr;
+    gap: 0.35rem 1.5rem;
+  }
+  .screen .nm {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    letter-spacing: 0.04em;
+    color: var(--accent);
+    padding-top: 0.22rem;
+  }
+  .screen .desc { margin: 0; }
+  .screen .desc p { font-size: 0.95rem; color: var(--ink-2); }
+  .screen .desc p:first-child { color: var(--ink); }
+  @media (max-width: 34rem) {
+    .screen { grid-template-columns: 1fr; gap: 0.3rem; }
+  }
+
+  /* ---------- open questions ---------- */
+
+  .questions {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin: 1.75rem 0;
+    counter-reset: q;
+  }
+  .q {
+    background: var(--amber-soft);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--amber);
+    padding: 1.15rem 1.3rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .q .num {
+    counter-increment: q;
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.12em;
+    color: var(--amber);
+    text-transform: uppercase;
+  }
+  .q .num::before { content: "Question " counter(q); }
+  .q .ask {
+    font-family: var(--display);
+    font-size: 1.15rem;
+    line-height: 1.35;
+    text-wrap: balance;
+    color: var(--ink);
+  }
+  .q p { font-size: 0.93rem; color: var(--ink-2); margin: 0; }
+  .q .guess {
+    font-size: 0.93rem;
+    padding-top: 0.35rem;
+    border-top: 1px solid var(--rule);
+    color: var(--ink-2);
+  }
+  .q .guess b {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--amber);
+    display: block;
+    margin-bottom: 0.2rem;
+    font-weight: 500;
+  }
+
+  /* ---------- risks ---------- */
+
+  .table-scroll { overflow-x: auto; margin: 1.5rem 0; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.92rem;
+    min-width: 30rem;
+  }
+  th {
+    text-align: left;
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 500;
+    padding: 0 0.9rem 0.6rem 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  td {
+    padding: 0.8rem 0.9rem 0.8rem 0;
+    border-bottom: 1px solid var(--rule-soft);
+    color: var(--ink-2);
+    vertical-align: top;
+  }
+  td:first-child { color: var(--ink); }
+  .sev {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.05em;
+    padding: 0.15rem 0.45rem;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+  .sev-high { background: var(--rose-soft); color: var(--rose); }
+  .sev-med  { background: var(--amber-soft); color: var(--amber); }
+  .sev-low  { background: var(--rule-soft); color: var(--ink-3); }
+
+  /* ---------- build order ---------- */
+
+  .steps { list-style: none; padding: 0; margin: 1.5rem 0; counter-reset: s; }
+  .steps li {
+    counter-increment: s;
+    display: grid;
+    grid-template-columns: 2.1rem 1fr;
+    gap: 0.9rem;
+    padding: 0.7rem 0;
+    border-bottom: 1px solid var(--rule-soft);
+    margin: 0;
+  }
+  .steps li::before {
+    content: counter(s, decimal-leading-zero);
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--ink-3);
+    padding-top: 0.22rem;
+  }
+  .steps .first { color: var(--rose); }
+  .steps b { font-weight: 600; }
+  .steps span { color: var(--ink-2); font-size: 0.95rem; }
+
+  .shipline {
+    background: var(--sage-soft);
+    border-left: 3px solid var(--sage);
+    padding: 1rem 1.2rem;
+    margin-top: 1.25rem;
+    font-size: 0.95rem;
+    color: var(--ink-2);
+  }
+  .shipline strong { color: var(--ink); }
+
+  /* ---------- out of scope ---------- */
+
+  details {
+    border-top: 1px solid var(--rule);
+    padding: 0.9rem 0;
+  }
+  summary {
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.97rem;
+    list-style: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 1rem;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::after {
+    content: "+";
+    font-family: var(--mono);
+    color: var(--ink-3);
+    font-size: 1rem;
+  }
+  details[open] summary::after { content: "\2212"; }
+  details .inner { padding-top: 0.8rem; font-size: 0.95rem; color: var(--ink-2); }
+
+  footer {
+    margin-top: 4rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--ink-3);
+    line-height: 1.7;
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">Design spec &nbsp;·&nbsp; Phase 1</div>
+    <h1>SLP Session Tracker</h1>
+    <p class="standfirst">One place to take attendance, chart a session, and see how a student is actually doing — for a school speech-language pathologist running a full caseload on paper.</p>
+    <div class="meta">
+      <span><b>Drafted</b> 24 Aug 2026</span>
+      <span><b>Status</b> Ready to build</span>
+      <span><b>Open questions</b> All resolved</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>What it does</h2>
+    <p>It answers three questions she currently answers from memory, paper, and a spreadsheet:</p>
+    <ul>
+      <li><strong>Who did I see, and when?</strong> Attendance against a schedule that repeats every week, plus the makeups and drop-ins that never fit the schedule.</li>
+      <li><strong>How is this student doing?</strong> Every note and number ever recorded for a student, in one place, over time.</li>
+      <li><strong>What am I teaching them?</strong> Lesson plans queued per student against what their grade is covering. <em>Phase 2 — not designed here.</em></li>
+    </ul>
+    <p>The idea underneath all of it: <strong>she enters data once, where the work happens, and it aggregates everywhere else on its own.</strong> She charts a session; that session lands on the student's history, marks them present, and feeds their progress chart. Nothing gets copied twice.</p>
+  </section>
+
+  <section>
+    <h2>The constraint that reframed everything</h2>
+    <div class="keystone">
+      <div class="label">Learned mid-design</div>
+      <div class="line">She is never at a computer during a session.</div>
+      <p>She charts on paper in the room and transcribes later. This is not a live-capture app — it's a transcription app, and it should be optimized for filling in a whole day at once, keyboard-first, without touching the mouse. This single fact invalidated an entire screen design. It should be the first thing checked against any future UI idea.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Decisions locked</h2>
+    <ul class="decisions">
+      <li>
+        <span class="head">Groups, not one-on-one.</span>
+        <span class="body">A time slot holds several students. Notes and data are recorded per student, so they aggregate to the right person.</span>
+      </li>
+      <li>
+        <span class="head">The weekly schedule is a template, not history.</span>
+        <span class="body">Each session keeps its own copy of its date, time, and roster. Moving a student to a new time never rewrites the past — which removes any need for schedule versioning.</span>
+      </li>
+      <li>
+        <span class="head">Sessions are created when she changes something, never when she just looks.</span>
+        <span class="body">Browsing next month stays read-only, so future rosters keep tracking schedule edits instead of silently freezing.</span>
+      </li>
+      <li>
+        <span class="head">Attendance marks itself.</span>
+        <span class="body">Entering any number or note marks that student present. Absent is one tap. <em>Nothing entered yet</em> is a third, visible state — it means "still owed," not "absent."</span>
+      </li>
+      <li>
+        <span class="head">Local-first, backed up to Drive by hand.</span>
+        <span class="body">No Google sign-in, no server, no IT approval. The data lives on her laptop; backup is a button.</span>
+      </li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>How the data is shaped</h2>
+    <p>Her real IEP goals set the structure. A student has one or two goals; each goal has two or three objectives; the objectives are what she actually collects data against.</p>
+
+    <div class="tree">
+      <span class="n">Student</span> <span class="c">— name, grade, school, active</span><br>
+      <span class="pipe">└─</span> <span class="n">Goal</span> <span class="c">— pasted IEP text (1–2 per student)</span><br>
+      <span class="pipe">&nbsp;&nbsp;&nbsp;└─</span> <span class="n">Objective</span> <span class="c">— pasted IEP text (2–3 per goal)</span><br>
+      <span class="pipe">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└─</span> <span class="g">fields</span> <span class="c">— numbers and text, what she types each session</span><br>
+      <span class="pipe">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├─</span> <span class="n">Trials completed</span> <span class="c">— number</span><br>
+      <span class="pipe">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├─</span> <span class="n">Trials # goal</span> <span class="c">— number, pre-filled 4</span><br>
+      <span class="pipe">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└─</span> <span class="n">Notes</span> <span class="c">— free text</span>
+    </div>
+
+    <h3>Several numbers per objective is the normal case</h3>
+    <p>An objective declares a short, flat list of fields, and a field is one of exactly two things: a <strong>number</strong> or <strong>free text</strong>. That's the whole type system. Most objectives have two numbers and a note — <code>Trials completed</code>, <code>Trials # goal</code>, and free text to explain the gap between them.</p>
+    <p><strong>Number fields can be pre-filled.</strong> When she sets up an objective she can give a field a standing value — <code>Trials # goal</code> starts at 4 — and it appears filled in on every session. She changes it on the sessions that ran differently. Fast when nothing changes, honest when it does: the day a student melts down after two trials records <code>2 of 2</code>, not a misleading <code>2 of 4</code>, and the note says why.</p>
+    <p><strong>The cap matters as much as the feature.</strong> Two field types, flat, no nesting, no conditional logic. The failure mode of a system like this is quietly becoming a form builder — at which point she's doing data modeling instead of therapy. Presets do the real work; custom fields are the escape hatch.</p>
+
+    <h3>Progress is only ever compared to itself</h3>
+    <p>An objective's numbers are charted against that same objective over time, and <strong>never against another objective</strong>. This sounds like a limitation and is actually the thing that makes the whole model work — nothing needs a common scale, nothing needs normalizing, and a number means whatever it means on that objective without the app having an opinion.</p>
+    <p>Where an objective uses the standard preset, the app knows which number is the achievement and which is the target, so it can show <code>3 / 4 · 75%</code> and track her actual goal language — <em>"in 3 out of 4 trials across three sessions"</em> — as <strong>met criterion in 2 of 3 consecutive sessions</strong>. That's something she currently keeps track of in her head.</p>
+
+    <div class="keystone">
+      <div class="label">A detail that would otherwise become a bug</div>
+      <div class="line">A pre-filled number is not something she entered.</div>
+      <p>Two behaviors depend on knowing the difference. Attendance marks itself when she enters data — if a pre-filled default counted, every student would flip to <em>present</em> the moment the day appeared on screen. The same goes for the <code>8 of 11 sessions charted</code> counter, which would report an untouched day as finished. So a field remembers whether its value was typed or merely offered. She never sees the distinction; the app depends on it.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Three screens</h2>
+    <div class="screens">
+      <div class="screen">
+        <div class="nm">Today</div>
+        <div class="desc">
+          <p>The transcription screen — where she'll spend nearly all her time.</p>
+          <p>The day's sessions, expanded by default because she's filling in all of them. Down the page: student, their goal, then a row per objective. Tab moves through every field in reading order, all day, no mouse. Autosaves on change — no save button, nothing that can eat a note. A counter up top reads <code>8 of 11 sessions charted</code> so she can see what she still owes. <code>+ Add student</code> pulls someone into <em>this session only</em>, which is how makeups and drop-ins work without touching the schedule.</p>
+          <p><strong>Her goal and objective text sits right there while she charts.</strong> She pastes it once when setting the student up and it appears in every session from then on. It's about sixty words of IEP boilerplate per objective, so it shows as one line and opens when she wants it — the useful part is the middle clause, <em>"identify common objects when described,"</em> not the shared preamble. <code>STUDENT</code> is swapped for the child's real name, and the text never pushes the input boxes around: fields hold the same position for every student, so the tab rhythm never changes.</p>
+        </div>
+      </div>
+      <div class="screen">
+        <div class="nm">Students</div>
+        <div class="desc">
+          <p>Everything that has ever been recorded about one child.</p>
+          <p>Goals and objectives, editable in place. Progress over time per objective, with mastery status. Full session history, newest first — date, attendance, note, and the numbers. Filter it to a date range and that is, essentially, her quarterly progress report.</p>
+        </div>
+      </div>
+      <div class="screen">
+        <div class="nm">Schedule</div>
+        <div class="desc">
+          <p>Set it in September, barely touch it again.</p>
+          <p>A Monday-to-Friday grid. Add and remove slots, set times, assign students. Makeups and one-off sessions deliberately don't live here — they belong to Today.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Where the data lives</h2>
+    <p>The app is a single HTML file. Double-click it and it opens — no install, no server, no sign-in. Her data is stored by the browser on her own laptop, so nothing leaves the district machine.</p>
+    <p><strong>Backup is a button.</strong> "Back up now" saves a dated file she drags into Google Drive; "Restore" reads one back. If she hasn't backed up in a few days, the app says so.</p>
+    <p><strong>And if her laptop allows it, backup becomes invisible.</strong> Some browsers let a page write directly to a file she chooses. If hers does, she picks a file inside her Google Drive folder once, and from then on the app keeps it up to date after every session — Drive syncs it without her thinking about it. If her browser won't allow that, the button still does the job.</p>
+    <p>The manual version gets built first. It isn't throwaway work — it's the fallback the automatic version needs anyway.</p>
+  </section>
+
+  <section>
+    <h2>Questions, answered</h2>
+    <p>Four things were unresolved. All four now have answers, and two of them made the design <em>smaller</em> — which is the best outcome a question can have.</p>
+
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>Question</th><th>Answer</th><th>What it changed</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>What do the numbers mean?</td>
+            <td>Whatever that objective says. Progress is compared only within one objective, over time.</td>
+            <td>Deleted all normalization and cross-objective scaling — logic that would have been subtly wrong forever.</td>
+          </tr>
+          <tr>
+            <td>Is the target fixed, or per session?</td>
+            <td>Both. Fields carry a pre-filled default she can override on any session.</td>
+            <td>Replaced a separate stored criterion with a plain field default.</td>
+          </tr>
+          <tr>
+            <td>What is "qualitative" data?</td>
+            <td>Just free text. No ratings, no scales.</td>
+            <td>Deleted an entire field type before it was built.</td>
+          </tr>
+          <tr>
+            <td>Should typing "absent" mark absent?</td>
+            <td>No — it only has to be fast.</td>
+            <td>One tap and a keyboard shortcut. No text parsing, no false positives.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="keystone">
+      <div class="label">Worth remembering for Phase 2</div>
+      <div class="line">Ask for the artifact, not the description.</div>
+      <p>The abstract description of this data moved four times in ten minutes. A single concrete thing — the actual IEP goal text, pasted verbatim — settled more than every abstract description combined. When the next question stalls, the fastest way through is a real example from her actual caseload rather than another round of "what do you want?"</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Risks</h2>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>Risk</th><th>Severity</th><th>Mitigation</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Browser storage blocked or wiped by IT policy</td>
+            <td><span class="sev sev-high">High</span></td>
+            <td>Verify on her actual laptop before writing app code. Aggressive backup reminders. File mirror where supported.</td>
+          </tr>
+          <tr>
+            <td>Custom fields degrade into a form builder</td>
+            <td><span class="sev sev-med">Medium</span></td>
+            <td>Hard cap on field types. Presets carry every common case.</td>
+          </tr>
+          <tr>
+            <td>Requirements keep moving</td>
+            <td><span class="sev sev-med">Medium</span></td>
+            <td>The field model absorbs shape changes without code changes.</td>
+          </tr>
+          <tr>
+            <td>Single HTML file grows unmaintainable</td>
+            <td><span class="sev sev-low">Low</span></td>
+            <td>Clear sectioning inside the file. Revisit only if it actually becomes a problem.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>The first row deserves emphasis: an HTML file opened directly from disk sits in a corner of the browser where local storage has historically been inconsistent, and "clear browsing data" can wipe it without warning. <strong>That gets tested on her machine before anything is built on top of it.</strong></p>
+  </section>
+
+  <section>
+    <h2>Build order</h2>
+    <ol class="steps">
+      <li><b class="first">Verify storage works on her laptop.</b> <span>Everything else is contingent on this. Before any app code.</span></li>
+      <li><b>Data layer and backup.</b> <span>Storage, export, restore.</span></li>
+      <li><b>Schedule.</b> <span>She needs a caseload and a weekly grid before anything else is usable.</span></li>
+      <li><b>Students.</b> <span>Goals, objectives, field definitions.</span></li>
+      <li><b>Today.</b> <span>The transcription grid. The heart of the app.</span></li>
+      <li><b>Aggregation.</b> <span>Session history, progress over time, mastery tracking.</span></li>
+      <li><b>Automatic file backup.</b> <span>Only where the browser supports it.</span></li>
+      <li><b>Phase 2.</b> <span>Curriculum and lesson planning, designed separately.</span></li>
+    </ol>
+    <div class="shipline">
+      <strong>Steps 2–6 are a real, usable app.</strong> Ship it to her there and let a month of actual use answer the open questions better than any interview will.
+    </div>
+  </section>
+
+  <section>
+    <h2>Deliberately not building</h2>
+    <details>
+      <summary>Curriculum and lesson planning</summary>
+      <div class="inner">Phase 2. Feeding the curriculum in so the app can show what each grade is covering in a given week, surfacing that on the student tab alongside queued lesson plans. One note for that pass: "feed AI the curriculum" should almost certainly mean processing it <em>once, ahead of time</em>, into a grade-and-week lookup table shipped inside the file — not a live AI call, which would mean an API key sitting in an HTML file on a district laptop.</div>
+    </details>
+    <details>
+      <summary>School-year rollover</summary>
+      <div class="inner">Marking a student inactive covers the immediate need. A real rollover tool is speculation about a workflow neither of us has watched happen yet.</div>
+    </details>
+    <details>
+      <summary>Linking a makeup to the session it replaces</summary>
+      <div class="inner">Nothing downstream needs the relationship. A "makeup" label carries the meaning she actually wants.</div>
+    </details>
+    <details>
+      <summary>Sharing, sync, and multiple users</summary>
+      <div class="inner">One person, one machine. Student IEP data is FERPA-protected — keeping it on the district laptop and out of third-party services is a feature, not a limitation.</div>
+    </details>
+  </section>
+
+  <footer>
+    Design spec · 24 August 2026 · Phase 1 of 2 · All open questions resolved<br>
+    Next step is a storage test on her actual laptop, then build steps 2–6 and put it in her hands.
+  </footer>
+
+</div>

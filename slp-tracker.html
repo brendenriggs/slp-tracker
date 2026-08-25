@@ -16,6 +16,45 @@
     font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   }
   #app { max-width: 1100px; margin: 0 auto; padding: 0 16px 64px; }
+
+  header.app-header {
+    position: sticky; top: 0; z-index: 10; background: var(--bg);
+    border-bottom: 1px solid var(--line); padding: 10px 0 0;
+  }
+  .app-title { font-size: 15px; font-weight: 600; margin: 0 0 8px; }
+  .tabs { display: flex; gap: 4px; }
+  .tab {
+    appearance: none; border: 1px solid var(--line); border-bottom: none;
+    background: var(--row); color: var(--muted); cursor: pointer;
+    padding: 7px 16px; border-radius: 6px 6px 0 0; font: inherit;
+  }
+  .tab.active { background: var(--bg); color: var(--fg); font-weight: 600;
+                box-shadow: inset 0 2px 0 var(--accent); }
+  .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .view { padding-top: 18px; }
+  .muted { color: var(--muted); }
+  .empty { color: var(--muted); padding: 28px 0; }
+  .toast {
+    position: fixed; right: 16px; bottom: 16px; z-index: 50;
+    padding: 9px 14px; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--bg); box-shadow: 0 2px 10px rgba(0,0,0,.12);
+  }
+  .toast-ok { border-color: var(--ok); color: var(--ok); }
+  .toast-warn { border-color: var(--warn); color: var(--warn); }
+  .toast-error { border-color: var(--danger); color: var(--danger); }
+  button.primary {
+    background: var(--accent); color: #fff; border: 1px solid var(--accent);
+    border-radius: 6px; padding: 7px 14px; font: inherit; cursor: pointer;
+  }
+  button.plain {
+    background: var(--bg); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 12px; font: inherit; cursor: pointer;
+  }
+  input[type="text"], input[type="number"], input[type="time"], textarea, select {
+    font: inherit; color: var(--fg); background: var(--field);
+    border: 1px solid var(--line); border-radius: 5px; padding: 5px 7px;
+  }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 </style>
 </head>
 <body>
@@ -693,9 +732,91 @@ SLP.backup = (() => {
 })();
 
 // ============================================================
+// SECTION: ui.shell — DOM helpers, tab router, boot.
+// ============================================================
+SLP.ui = (() => {
+  const $ = sel => document.querySelector(sel);
+  const $$ = sel => Array.from(document.querySelectorAll(sel));
+  const clear = el => { while (el.firstChild) el.removeChild(el.firstChild); return el; };
+
+  function h(tag, attrs, ...children) {
+    const el = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v === null || v === undefined || v === false) continue;
+      if (k === 'text') el.textContent = v;                    // never innerHTML: her text is data
+      else if (k === 'html') el.innerHTML = v;                 // only for app-authored markup
+      else if (k === 'class') el.className = v;
+      else if (k === 'value') el.value = v;
+      else if (k.startsWith('on:')) el.addEventListener(k.slice(3), v);
+      else el.setAttribute(k, v === true ? '' : v);
+    }
+    for (const c of children.flat()) {
+      if (c === null || c === undefined || c === false) continue;
+      el.appendChild(c instanceof Node ? c : document.createTextNode(String(c)));
+    }
+    return el;
+  }
+
+  const pad = n => String(n).padStart(2, '0');
+  function todayStr(d = new Date()) {
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  }
+
+  const route = { tab: 'today', date: todayStr(), studentId: null };
+  const views = {};                                 // filled in by later sections
+
+  let toastTimer = null;
+  function toast(msg, kind = 'info') {
+    const old = $('.toast');
+    if (old) old.remove();
+    clearTimeout(toastTimer);
+    const t = h('div', { class: 'toast toast-' + kind, text: msg, role: 'status' });
+    document.body.appendChild(t);
+    toastTimer = setTimeout(() => t.remove(), 2600);
+  }
+
+  const TABS = [
+    ['today', 'Today'],
+    ['students', 'Students'],
+    ['schedule', 'Schedule'],
+  ];
+
+  async function render() {
+    const app = $('#app');
+    clear(app);
+    app.appendChild(
+      h('header', { class: 'app-header' },
+        h('p', { class: 'app-title', text: 'SLP Session Tracker' }),
+        h('nav', { class: 'tabs' },
+          TABS.map(([id, label]) =>
+            h('button', {
+              class: 'tab' + (route.tab === id ? ' active' : ''),
+              'data-tab': id, type: 'button',
+              'on:click': () => go({ tab: id }),
+            }, label)))));
+
+    const root = h('div', { class: 'view', id: 'view-' + route.tab });
+    app.appendChild(root);
+    const view = views[route.tab];
+    if (view) await view(root);
+    else root.appendChild(h('p', { class: 'empty', text: 'Nothing here yet.' }));
+  }
+
+  async function go(patch) {
+    Object.assign(route, patch);
+    await render();
+  }
+
+  return { $, $$, clear, h, route, go, render, views, toast, todayStr };
+})();
+
+// ============================================================
 // SECTION: boot — wire everything up.
 // ============================================================
-SLP.ready = Promise.resolve();
+SLP.ready = (async () => {
+  await SLP.db.open();
+  await SLP.ui.render();
+})();
 </script>
 </body>
 </html>

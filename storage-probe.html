@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Storage Test</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>💾</text></svg>">
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --ink: #16181d;
+    --muted: #5c6370;
+    --line: #d8dce3;
+    --accent: #2b5fd9;
+    --accent-ink: #ffffff;
+    --ok-bg: #e6f6ec;   --ok-line: #91cfa8;  --ok-ink: #10562c;
+    --bad-bg: #fdeaea;  --bad-line: #e9a3a3; --bad-ink: #8a1c1c;
+    --wait-bg: #fff6e0; --wait-line: #e6c877; --wait-ink: #6b4a05;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a; --card: #1d2026; --ink: #e9ecf1; --muted: #a3abb8;
+      --line: #333944; --accent: #6d97f0; --accent-ink: #10131a;
+      --ok-bg: #14301f;  --ok-line: #2f6b45;  --ok-ink: #a5e5bf;
+      --bad-bg: #38191a; --bad-line: #7d3437; --bad-ink: #f2b3b3;
+      --wait-bg: #362c12; --wait-line: #7a6522; --wait-ink: #f0d99a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 20px 80px;
+    background: var(--bg); color: var(--ink);
+    font: 17px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 28px; line-height: 1.25; margin: 0 0 6px; }
+  .sub { color: var(--muted); margin: 0 0 28px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 22px 24px; margin-bottom: 20px;
+  }
+  .card h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .06em;
+             color: var(--muted); margin: 0 0 14px; font-weight: 600; }
+  .verdict { border-width: 2px; }
+  .verdict.ok   { background: var(--ok-bg);   border-color: var(--ok-line); }
+  .verdict.bad  { background: var(--bad-bg);  border-color: var(--bad-line); }
+  .verdict.wait { background: var(--wait-bg); border-color: var(--wait-line); }
+  .verdict .headline { font-size: 26px; font-weight: 700; line-height: 1.3; margin: 0 0 8px; }
+  .verdict.ok   .headline { color: var(--ok-ink); }
+  .verdict.bad  .headline { color: var(--bad-ink); }
+  .verdict.wait .headline { color: var(--wait-ink); }
+  .verdict p { margin: 0 0 10px; }
+  .verdict p:last-child { margin-bottom: 0; }
+  button {
+    font: inherit; font-weight: 600; cursor: pointer;
+    background: var(--accent); color: var(--accent-ink);
+    border: none; border-radius: 8px; padding: 13px 22px;
+    margin: 4px 8px 4px 0;
+  }
+  button:hover { filter: brightness(1.08); }
+  button:disabled { opacity: .45; cursor: default; filter: none; }
+  button.secondary {
+    background: transparent; color: var(--ink); border: 1px solid var(--line);
+  }
+  ol.steps { margin: 0; padding-left: 22px; }
+  ol.steps li { margin-bottom: 12px; }
+  ol.steps li:last-child { margin-bottom: 0; }
+  .big-note { font-weight: 700; }
+  table.results { width: 100%; border-collapse: collapse; }
+  table.results td { padding: 9px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  table.results tr:last-child td { border-bottom: none; }
+  table.results td:first-child { padding-right: 16px; }
+  table.results td:last-child { text-align: right; font-weight: 600; white-space: nowrap; }
+  .mark { font-size: 19px; }
+  textarea {
+    width: 100%; min-height: 240px; font: 13px/1.5 ui-monospace, SFMono-Regular,
+    Menlo, Consolas, monospace; padding: 12px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+    resize: vertical;
+  }
+  .hint { color: var(--muted); font-size: 15px; }
+  .copied { color: var(--ok-ink); font-weight: 600; margin-left: 8px; }
+  details { margin-top: 10px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 15px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Storage Test</h1>
+  <p class="sub">This checks whether this computer will reliably remember information
+     saved by a page like this one. It sends nothing anywhere &mdash; everything stays on
+     this machine.</p>
+
+  <div id="verdict" class="card verdict wait">
+    <p class="headline" id="verdictHead">Checking&hellip;</p>
+    <div id="verdictBody"></div>
+  </div>
+
+  <div class="card">
+    <h2>What to do</h2>
+    <ol class="steps">
+      <li>Press <strong>Save a test note</strong> below.</li>
+      <li><span class="big-note">Quit Chrome completely</span> &mdash; not just this tab.
+          Close every Chrome window. (On Windows: <em>right-click the Chrome icon in the
+          taskbar &rarr; Close all windows</em>.)</li>
+      <li>Open this same file again by double-clicking it, and read the result at the top
+          of the page.</li>
+      <li>Press <strong>Test saving to a file</strong> and pick any folder when the
+          window pops up.</li>
+      <li>Press <strong>Ask for permanent storage</strong>. If Chrome asks permission,
+          say yes.</li>
+      <li>Press <strong>Copy results</strong> at the bottom and paste them back to Brenden.</li>
+    </ol>
+    <p style="margin-bottom:0">
+      <button id="btnSave">Save a test note</button>
+      <button id="btnCheck" class="secondary">Check again</button>
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Results</h2>
+    <table class="results">
+      <tr><td>Remembers a saved note (main method)</td><td id="rIdb">&hellip;</td></tr>
+      <tr><td>Note survived quitting Chrome</td><td id="rRestart">&hellip;</td></tr>
+      <tr><td>Remembers a saved note (backup method)</td><td id="rLs">&hellip;</td></tr>
+      <tr><td>Can save straight to a folder</td><td id="rFsa">&hellip;</td></tr>
+      <tr><td>Reconnects to that folder after quitting</td><td id="rFsaPersist">&hellip;</td></tr>
+      <tr><td>Protected from automatic cleanup</td><td id="rPersist">&hellip;</td></tr>
+    </table>
+    <p style="margin-bottom:0">
+      <button id="btnFile" class="secondary">Test saving to a file</button>
+      <button id="btnPersist" class="secondary">Ask for permanent storage</button>
+      <button id="btnReconnect" class="secondary" style="display:none">Reconnect to the saved file</button>
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Details to send back</h2>
+    <textarea id="report" readonly spellcheck="false"></textarea>
+    <p style="margin-bottom:0">
+      <button id="btnCopy">Copy results</button>
+      <span id="copied" class="copied" style="display:none">Copied.</span>
+      <span class="hint" id="copyHint" style="display:none">Select all the text above and
+        press Ctrl+C.</span>
+    </p>
+  </div>
+
+  <details>
+    <summary>What this test is actually doing</summary>
+    <p class="hint">It writes a small note with a random code into the browser's built-in
+    storage (IndexedDB, plus localStorage as a cross-check), then looks for that same code
+    after you reopen the file. If the code comes back, storage works and survives a
+    restart. It also tries the newer "save directly to a file" feature and checks whether
+    the connection to that file can be restored later without picking it again. No data
+    leaves the computer and nothing is installed.</p>
+  </details>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var DB_NAME = "slp-storage-probe";
+  var DB_VERSION = 1;
+  var STORE = "probe";
+  var KEY = "record";
+  var LS_KEY = "slp-storage-probe-token";
+  var SS_KEY = "slp-storage-probe-session";
+
+  // Collected findings, rendered into the report textarea.
+  var state = {
+    idb: null,          // true/false/null  — could we read a record back at all
+    idbError: null,
+    restart: null,      // true/false/null  — did the record survive a fresh browser session
+    ls: null,
+    lsError: null,
+    fsa: null,          // true/false/null  — did an actual pick+write+readback succeed
+    fsaNote: "",
+    fsaPersist: null,
+    fsaPersistNote: "",
+    persistGranted: null,   // result of navigator.storage.persist()
+    persistNote: "",
+    record: null,
+    freshSession: false
+  };
+
+  function $(id) { return document.getElementById(id); }
+
+  function randomToken() {
+    var bytes = new Uint8Array(6);
+    (window.crypto || window.msCrypto).getRandomValues(bytes);
+    return Array.prototype.map.call(bytes, function (b) {
+      return ("0" + b.toString(16)).slice(-2);
+    }).join("");
+  }
+
+  // ---- IndexedDB -----------------------------------------------------------
+
+  function openDb() {
+    return new Promise(function (resolve, reject) {
+      if (!window.indexedDB) { reject(new Error("IndexedDB is not available at all")); return; }
+      var req;
+      try { req = indexedDB.open(DB_NAME, DB_VERSION); }
+      catch (e) { reject(e); return; }
+      req.onupgradeneeded = function () {
+        var db = req.result;
+        if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
+      };
+      req.onsuccess = function () { resolve(req.result); };
+      req.onerror = function () { reject(req.error || new Error("open failed")); };
+      req.onblocked = function () { reject(new Error("open blocked")); };
+    });
+  }
+
+  function idbGet() {
+    return openDb().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(STORE, "readonly");
+        var req = tx.objectStore(STORE).get(KEY);
+        req.onsuccess = function () { resolve(req.result || null); };
+        req.onerror = function () { reject(req.error); };
+      });
+    });
+  }
+
+  function idbPut(value) {
+    return openDb().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(STORE, "readwrite");
+        tx.objectStore(STORE).put(value, KEY);
+        tx.oncomplete = function () { resolve(value); };
+        tx.onerror = function () { reject(tx.error); };
+        tx.onabort = function () { reject(tx.error || new Error("aborted")); };
+      });
+    });
+  }
+
+  // ---- Session / restart detection ----------------------------------------
+  // sessionStorage is cleared when the tab closes, so its absence means this is a
+  // brand-new tab. Combined with the explicit "quit Chrome" instruction and the
+  // elapsed time since the write, that is as close as a web page can get to
+  // detecting a browser restart.
+
+  function sessionIsFresh() {
+    try {
+      if (sessionStorage.getItem(SS_KEY)) return false;
+      sessionStorage.setItem(SS_KEY, String(Date.now()));
+      return true;
+    } catch (e) {
+      return true; // no sessionStorage: treat every load as fresh
+    }
+  }
+
+  // ---- Rendering -----------------------------------------------------------
+
+  function mark(v, labels) {
+    labels = labels || {};
+    if (v === true)  return '<span class="mark">✅</span> ' + (labels.yes || "Yes");
+    if (v === false) return '<span class="mark">❌</span> ' + (labels.no || "No");
+    return '<span class="mark">—</span> ' + (labels.unknown || "Not tested yet");
+  }
+
+  function minutesSince(ts) {
+    return Math.max(0, Math.round((Date.now() - ts) / 60000));
+  }
+
+  // Seconds between writing the note and the first load in a new browser session.
+  // A very small gap means the "restart" may only have been a closed tab.
+  function restartGapSeconds(r) {
+    if (!r || !r.loads) return null;
+    var first = r.loads.filter(function (x) {
+      return x.freshSession && x.at > r.writtenAt + 1000;
+    })[0];
+    return first ? Math.round((first.at - r.writtenAt) / 1000) : null;
+  }
+
+  function render() {
+    var r = state.record;
+
+    $("rIdb").innerHTML  = mark(state.idb);
+    $("rLs").innerHTML   = mark(state.ls);
+    $("rFsa").innerHTML  = mark(state.fsa, { unknown: "Not tested yet" });
+    $("rFsaPersist").innerHTML = mark(state.fsaPersist, { unknown: "Not tested yet" });
+    $("rPersist").innerHTML = mark(state.persistGranted, { unknown: "Not asked yet" });
+    $("rRestart").innerHTML = mark(state.restart, {
+      unknown: "Waiting — quit Chrome, then reopen"
+    });
+
+    var box = $("verdict"), head = $("verdictHead"), body = $("verdictBody");
+
+    if (state.idb === false && r === null && !localStorage_had_token()) {
+      // Nothing written yet, and we could not even open storage.
+      box.className = "card verdict bad";
+      head.textContent = "This computer will not save data.";
+      body.innerHTML = "<p>The browser refused to store anything at all. Please copy the " +
+        "results at the bottom of the page and send them back — the app will need to " +
+        "work a different way.</p>";
+    } else if (r === null && !localStorage_had_token()) {
+      box.className = "card verdict wait";
+      head.textContent = "Not started yet.";
+      body.innerHTML = "<p>Press <strong>Save a test note</strong> above to begin.</p>";
+    } else if (r === null && localStorage_had_token()) {
+      box.className = "card verdict bad";
+      head.textContent = "The saved note disappeared.";
+      body.innerHTML = "<p>A note was saved earlier, but it is gone now. This computer " +
+        "would lose session data. Please copy the results at the bottom and send them back.</p>";
+    } else if (state.restart === true) {
+      box.className = "card verdict ok";
+      head.textContent = "It works. The note came back.";
+      body.innerHTML = "<p>The note saved " + minutesSince(r.writtenAt) + " minute(s) ago " +
+        "survived closing and reopening the browser. That is exactly what we needed to know.</p>" +
+        (restartGapSeconds(r) !== null && restartGapSeconds(r) < 25
+          ? "<p><strong>One thing to double-check:</strong> only " + restartGapSeconds(r) +
+            " seconds passed between saving and reopening. If you closed just the window " +
+            "rather than quitting Chrome entirely, please press <strong>Save a test note</strong> " +
+            "again and redo it more slowly &mdash; a closed tab and a restarted browser look " +
+            "the same to this page.</p>"
+          : "") +
+        "<p>If you have not done it yet, press <strong>Test saving to a file</strong> and " +
+        "<strong>Ask for permanent storage</strong> below, then <strong>Copy results</strong> " +
+        "and send them back.</p>";
+    } else {
+      box.className = "card verdict wait";
+      head.textContent = "Note saved. Now quit Chrome.";
+      body.innerHTML = "<p>The note is stored. The real test is whether it is still here " +
+        "after a full restart.</p>" +
+        "<p class=\"big-note\">Close every Chrome window — not just this tab — then " +
+        "double-click this file again.</p>";
+    }
+
+    $("btnReconnect").style.display = (r && r.hasHandle) ? "" : "none";
+    $("report").value = buildReport();
+  }
+
+  var _lsHadToken = false;
+  function localStorage_had_token() { return _lsHadToken; }
+
+  function buildReport() {
+    var L = [];
+    var r = state.record;
+    L.push("SLP storage probe — results");
+    L.push("Generated: " + new Date().toString());
+    L.push("");
+    L.push("HEADLINE");
+    L.push("  IndexedDB usable ............ " + tri(state.idb));
+    L.push("  Survived browser restart .... " + tri(state.restart));
+    L.push("  localStorage usable ......... " + tri(state.ls));
+    L.push("  File System Access API ...... " + tri(state.fsa) +
+           (state.fsaNote ? "  (" + state.fsaNote + ")" : ""));
+    L.push("  Saved file handle reusable .. " + tri(state.fsaPersist) +
+           (state.fsaPersistNote ? "  (" + state.fsaPersistNote + ")" : ""));
+    L.push("  Persistent storage granted .. " + tri(state.persistGranted) +
+           (state.persistNote ? "  (" + state.persistNote + ")" : ""));
+    L.push("");
+    L.push("RECORD");
+    if (r) {
+      L.push("  token ......... " + r.token);
+      L.push("  written ....... " + new Date(r.writtenAt).toString());
+      L.push("  age ........... " + minutesSince(r.writtenAt) + " min");
+      L.push("  page loads .... " + r.loads.length + " (fresh browser sessions: " +
+             r.loads.filter(function (x) { return x.freshSession; }).length + ")");
+      L.push("  restart gap ... " + (restartGapSeconds(r) === null
+             ? "n/a" : restartGapSeconds(r) + " s between write and first new session"));
+      r.loads.slice(-8).forEach(function (x, i) {
+        L.push("    " + (i + 1) + ". " + new Date(x.at).toISOString() +
+               (x.freshSession ? "  [new session]" : "  [same session]"));
+      });
+    } else {
+      L.push("  (no record found)");
+    }
+    if (state.idbError)  L.push("  IndexedDB error: " + state.idbError);
+    if (state.lsError)   L.push("  localStorage error: " + state.lsError);
+    L.push("");
+    L.push("ENVIRONMENT");
+    L.push("  location ........... " + location.href);
+    L.push("  protocol ........... " + location.protocol);
+    L.push("  origin ............. " + (location.origin || "(opaque / null)"));
+    L.push("  secure context ..... " + (window.isSecureContext ? "yes" : "NO"));
+    L.push("  cookies enabled .... " + (navigator.cookieEnabled ? "yes" : "no"));
+    L.push("  showSaveFilePicker . " + (typeof window.showSaveFilePicker === "function"
+                                        ? "present" : "ABSENT"));
+    L.push("  showDirectoryPicker  " + (typeof window.showDirectoryPicker === "function"
+                                        ? "present" : "ABSENT"));
+    L.push("  storage.persist .... " + (navigator.storage && navigator.storage.persist
+                                        ? "present" : "absent"));
+    L.push("  persisted() ........ " + state.persisted);
+    L.push("  estimate ........... " + state.estimate);
+    L.push("  platform ........... " + (navigator.userAgentData
+                                        ? navigator.userAgentData.platform : navigator.platform));
+    L.push("  userAgent .......... " + navigator.userAgent);
+    return L.join("\n");
+  }
+
+  function tri(v) { return v === true ? "YES" : v === false ? "NO" : "not tested"; }
+
+  // ---- Diagnostics ---------------------------------------------------------
+
+  state.persisted = "unknown";
+  state.estimate = "unavailable";
+
+  function collectDiagnostics() {
+    var jobs = [];
+    if (navigator.storage && navigator.storage.persisted) {
+      jobs.push(navigator.storage.persisted().then(function (p) {
+        state.persisted = p ? "true" : "false";
+      }, function (e) { state.persisted = "error: " + e; }));
+    }
+    if (navigator.storage && navigator.storage.estimate) {
+      jobs.push(navigator.storage.estimate().then(function (est) {
+        state.estimate = "usage=" + est.usage + " quota=" + est.quota;
+      }, function (e) { state.estimate = "error: " + e; }));
+    }
+    return Promise.all(jobs);
+  }
+
+  // ---- Core actions --------------------------------------------------------
+
+  function checkLocalStorage() {
+    try {
+      var existing = localStorage.getItem(LS_KEY);
+      _lsHadToken = !!existing;
+      localStorage.setItem(LS_KEY + "-probe", "1");
+      localStorage.removeItem(LS_KEY + "-probe");
+      state.ls = existing ? true : null;   // null until something was written
+      return existing;
+    } catch (e) {
+      state.ls = false;
+      state.lsError = String(e);
+      return null;
+    }
+  }
+
+  function check() {
+    state.freshSession = sessionIsFresh();
+    checkLocalStorage();
+
+    return collectDiagnostics()
+      .then(idbGet)
+      .then(function (rec) {
+        state.idb = true;
+        if (!rec) {
+          state.record = null;
+          if (_lsHadToken) state.restart = false;
+          return null;
+        }
+        rec.loads = rec.loads || [];
+        rec.loads.push({ at: Date.now(), freshSession: state.freshSession });
+        state.record = rec;
+        state.ls = _lsHadToken ? true : state.ls;
+        // Survived a restart if we are in a brand-new browser session and the record
+        // was written during an earlier one.
+        var freshLoadsAfterWrite = rec.loads.filter(function (x) {
+          return x.freshSession && x.at > rec.writtenAt + 1000;
+        });
+        state.restart = freshLoadsAfterWrite.length > 0 ? true : null;
+        return idbPut(rec).catch(function () { /* read result already counted */ });
+      })
+      .catch(function (e) {
+        state.idb = false;
+        state.idbError = String(e && e.message || e);
+        if (_lsHadToken) state.restart = false;
+      })
+      .then(render);
+  }
+
+  function saveNote() {
+    var token = randomToken();
+    var rec = {
+      token: token,
+      writtenAt: Date.now(),
+      loads: [{ at: Date.now(), freshSession: false }],
+      hasHandle: state.record ? !!state.record.hasHandle : false
+    };
+    try { localStorage.setItem(LS_KEY, token); }
+    catch (e) { state.ls = false; state.lsError = String(e); }
+
+    return idbPut(rec).then(function () {
+      state.idb = true;
+      state.record = rec;
+      state.restart = null;
+      _lsHadToken = true;
+      if (state.ls !== false) state.ls = true;
+    }, function (e) {
+      state.idb = false;
+      state.idbError = String(e && e.message || e);
+    }).then(render);
+  }
+
+  // ---- File System Access --------------------------------------------------
+
+  var HANDLE_KEY = "fileHandle";
+
+  function storeHandle(handle) {
+    return openDb().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(STORE, "readwrite");
+        tx.objectStore(STORE).put(handle, HANDLE_KEY);
+        tx.oncomplete = resolve;
+        tx.onerror = function () { reject(tx.error); };
+      });
+    });
+  }
+
+  function loadHandle() {
+    return openDb().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(STORE, "readonly");
+        var req = tx.objectStore(STORE).get(HANDLE_KEY);
+        req.onsuccess = function () { resolve(req.result || null); };
+        req.onerror = function () { reject(req.error); };
+      });
+    });
+  }
+
+  function testFileSave() {
+    if (typeof window.showSaveFilePicker !== "function") {
+      state.fsa = false;
+      state.fsaNote = "showSaveFilePicker not available in this browser";
+      render();
+      return;
+    }
+    var handle;
+    window.showSaveFilePicker({
+      suggestedName: "slp-storage-test.txt",
+      types: [{ description: "Text file", accept: { "text/plain": [".txt"] } }]
+    }).then(function (h) {
+      handle = h;
+      return h.createWritable();
+    }).then(function (w) {
+      return w.write("SLP storage probe test file.\nWritten " + new Date().toString() +
+                     "\nIf you can read this, writing to a chosen file works.\n")
+              .then(function () { return w.close(); });
+    }).then(function () {
+      return handle.getFile();
+    }).then(function (f) {
+      return f.text();
+    }).then(function (text) {
+      state.fsa = text.indexOf("SLP storage probe test file") === 0;
+      state.fsaNote = state.fsa ? "wrote and read back " + text.length + " bytes"
+                                : "wrote, but read back unexpected content";
+      return storeHandle(handle).then(function () {
+        if (state.record) {
+          state.record.hasHandle = true;
+          return idbPut(state.record);
+        }
+      });
+    }).catch(function (e) {
+      if (e && e.name === "AbortError") {
+        state.fsaNote = "picker was cancelled — press the button again and choose a file";
+      } else {
+        state.fsa = false;
+        state.fsaNote = String(e && e.name ? e.name + ": " + e.message : e);
+      }
+    }).then(render);
+  }
+
+  function requestPersist() {
+    if (!(navigator.storage && navigator.storage.persist)) {
+      state.persistGranted = false;
+      state.persistNote = "navigator.storage.persist not available";
+      render();
+      return;
+    }
+    navigator.storage.persist().then(function (granted) {
+      state.persistGranted = !!granted;
+      state.persistNote = granted
+        ? "storage marked persistent — not evictable under pressure"
+        : "request denied — storage stays best-effort and is clearable";
+      return collectDiagnostics();
+    }, function (e) {
+      state.persistGranted = false;
+      state.persistNote = String(e && e.name ? e.name + ": " + e.message : e);
+    }).then(render);
+  }
+
+  function reconnectHandle() {
+    loadHandle().then(function (handle) {
+      if (!handle) {
+        state.fsaPersist = false;
+        state.fsaPersistNote = "no stored handle found";
+        return;
+      }
+      var q = handle.queryPermission
+        ? handle.queryPermission({ mode: "readwrite" })
+        : Promise.resolve("granted");
+      return q.then(function (perm) {
+        if (perm === "granted") {
+          state.fsaPersistNote = "permission still granted, no prompt needed";
+          return "granted";
+        }
+        return handle.requestPermission({ mode: "readwrite" }).then(function (p) {
+          state.fsaPersistNote = (p === "granted")
+            ? "needed one click to re-grant permission"
+            : "permission denied";
+          return p;
+        });
+      }).then(function (perm) {
+        if (perm !== "granted") { state.fsaPersist = false; return; }
+        return handle.createWritable().then(function (w) {
+          return w.write("Reconnected and rewritten " + new Date().toString() + "\n")
+                  .then(function () { return w.close(); });
+        }).then(function () { state.fsaPersist = true; });
+      });
+    }).catch(function (e) {
+      state.fsaPersist = false;
+      state.fsaPersistNote = String(e && e.name ? e.name + ": " + e.message : e);
+    }).then(render);
+  }
+
+  // ---- Copy ----------------------------------------------------------------
+
+  function copyResults() {
+    var ta = $("report");
+    var done = function () {
+      $("copied").style.display = "";
+      setTimeout(function () { $("copied").style.display = "none"; }, 2500);
+    };
+    var fail = function () { $("copyHint").style.display = ""; ta.focus(); ta.select(); };
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(ta.value).then(done, function () {
+        try {
+          ta.focus(); ta.select();
+          document.execCommand("copy") ? done() : fail();
+        } catch (e) { fail(); }
+      });
+    } else {
+      try {
+        ta.focus(); ta.select();
+        document.execCommand("copy") ? done() : fail();
+      } catch (e) { fail(); }
+    }
+  }
+
+  // ---- Wire up -------------------------------------------------------------
+
+  $("btnSave").addEventListener("click", function () { saveNote(); });
+  $("btnCheck").addEventListener("click", function () { check(); });
+  $("btnFile").addEventListener("click", function () { testFileSave(); });
+  $("btnPersist").addEventListener("click", function () { requestPersist(); });
+  $("btnReconnect").addEventListener("click", function () { reconnectHandle(); });
+  $("btnCopy").addEventListener("click", copyResults);
+
+  check();
+})();
+</script>
+</body>
+</html>

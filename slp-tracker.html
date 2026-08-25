@@ -75,6 +75,22 @@
   .linkish { background: none; border: none; color: var(--accent); cursor: pointer;
              font: inherit; padding: 0; text-decoration: underline; }
   .danger-link { color: var(--danger); }
+
+  .split { display: grid; grid-template-columns: 250px 1fr; gap: 20px; align-items: start; }
+  .goal-block { border: 1px solid var(--line); border-radius: 8px; padding: 12px;
+                margin-bottom: 16px; }
+  .goal-text { font-size: 14px; margin: 0 0 8px; }
+  .goal-edit { width: 100%; min-height: 62px; resize: vertical; }
+  .objective-block { border-left: 3px solid var(--accent); padding: 8px 0 8px 12px;
+                     margin: 12px 0 12px 6px; }
+  .objective-text { font-size: 14px; margin: 0 0 8px; }
+  .field-row { display: flex; gap: 8px; align-items: center; padding: 3px 0; }
+  .field-label { flex: 1; min-width: 120px; }
+  .field-default { width: 70px; }
+  .field-role { font-size: 12px; color: var(--muted); min-width: 62px; }
+  .clamp { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical;
+           overflow: hidden; cursor: pointer; }
+  .clamp.open { -webkit-line-clamp: unset; }
 </style>
 </head>
 <body>
@@ -997,6 +1013,228 @@ SLP.ui = (() => {
     root.appendChild(await weekGrid(await SLP.store.listStudents({})));
     root.appendChild(await slotForm(students));
   };
+})();
+
+// ============================================================
+// SECTION: ui.students — goals, objectives, field definitions.
+// Task 12 adds history and charts to renderDetail().
+// ============================================================
+(() => {
+  const { h, toast } = SLP.ui;
+  const m = SLP.model;
+  const ui = { search: '', armedDelete: null };
+
+  // Exported: Task 10 reuses this for ad hoc objective tweaks.
+  function fieldEditor(objective, onChange) {
+    const wrap = h('div', { class: 'field-editor' });
+
+    for (const f of objective.fields) {
+      const label = h('input', { type: 'text', class: 'field-label', value: f.label });
+      label.addEventListener('blur', async () => {
+        const v = label.value.trim();
+        if (!v || v === f.label) return;
+        f.label = v;                       // id is untouched: past datapoints keep their values
+        await onChange();
+      });
+
+      const type = h('select', { class: 'field-type' },
+        h('option', { value: 'number', text: 'number' }),
+        h('option', { value: 'text', text: 'text' }));
+      type.value = f.type;
+      type.addEventListener('change', async () => {
+        f.type = type.value;
+        if (f.type === 'text') { f.default = null; f.role = null; }
+        await onChange();
+      });
+
+      const row = h('div', { class: 'field-row', 'data-field-id': f.id }, label, type);
+
+      if (f.type === 'number') {
+        const def = h('input', { type: 'number', class: 'field-default',
+                                 placeholder: 'default',
+                                 value: f.default === null || f.default === undefined ? '' : f.default });
+        def.addEventListener('blur', async () => {
+          const raw = def.value.trim();
+          const next = raw === '' ? null : Number(raw);
+          if (raw !== '' && !Number.isFinite(next)) { def.value = f.default ?? ''; return; }
+          if (next === f.default) return;
+          f.default = next;
+          await onChange();
+        });
+        row.appendChild(def);
+      }
+      if (f.role) row.appendChild(h('span', { class: 'field-role', text: f.role }));
+
+      row.appendChild(h('button', {
+        class: 'linkish danger-link remove-field', type: 'button', text: 'remove',
+        'on:click': async () => {
+          objective.fields = objective.fields.filter(x => x.id !== f.id);
+          await onChange();
+        },
+      }));
+      wrap.appendChild(row);
+    }
+
+    const newLabel = h('input', { type: 'text', class: 'new-field-label',
+                                  placeholder: 'New field name' });
+    const newType = h('select', { class: 'new-field-type' },
+      h('option', { value: 'number', text: 'number' }),
+      h('option', { value: 'text', text: 'text' }));
+    wrap.appendChild(h('div', { class: 'row-form', style: 'margin-top:6px' },
+      newLabel, newType,
+      h('button', {
+        class: 'plain add-field', type: 'button', text: 'Add field',
+        'on:click': async () => {
+          const label = newLabel.value.trim();
+          if (!label) { toast('A field needs a name.', 'warn'); return; }
+          objective.fields.push(m.field({ label, type: newType.value }));
+          await onChange();
+        },
+      })));
+    return wrap;
+  }
+
+  function objectiveBlock(student, objective, refresh) {
+    const save = async () => { await SLP.store.saveObjective(objective); await refresh(); };
+    const armed = ui.armedDelete === objective.id;
+
+    const text = h('textarea', { class: 'goal-edit objective-edit', value: objective.text });
+    text.addEventListener('blur', async () => {
+      const v = text.value.trim();
+      if (!v || v === objective.text) return;
+      objective.text = v;
+      await save();
+    });
+
+    return h('div', { class: 'objective-block', 'data-objective-id': objective.id },
+      h('p', { class: 'objective-text',
+               text: m.displayText(objective.text, student.name) }),
+      text,
+      fieldEditor(objective, save),
+      armed
+        ? h('div', { class: 'row-form', style: 'margin-top:6px' },
+            h('span', { class: 'muted',
+                        text: 'Delete this objective and everything charted against it?' }),
+            h('button', {
+              class: 'plain danger-link confirm-delete-objective', type: 'button',
+              text: 'Yes, delete',
+              'on:click': async () => {
+                await SLP.store.deleteObjective(objective.id);
+                ui.armedDelete = null;
+                toast('Objective deleted.', 'ok');
+                await refresh();
+              },
+            }),
+            h('button', {
+              class: 'plain cancel-delete-objective', type: 'button', text: 'Keep it',
+              'on:click': async () => { ui.armedDelete = null; await refresh(); },
+            }))
+        : h('button', {
+            class: 'linkish danger-link delete-objective', type: 'button', text: 'Delete objective',
+            'on:click': async () => { ui.armedDelete = objective.id; await refresh(); },
+          }));
+  }
+
+  function goalBlock(student, goal, objectives, refresh) {
+    const edit = h('textarea', { class: 'goal-edit', value: goal.text });
+    edit.addEventListener('blur', async () => {
+      const v = edit.value.trim();
+      if (!v || v === goal.text) return;
+      goal.text = v;
+      await SLP.store.saveGoal(goal);
+      await refresh();
+    });
+
+    const newObj = h('textarea', { class: 'goal-edit new-objective-text',
+                                   placeholder: 'Paste the objective text…' });
+
+    return h('section', { class: 'goal-block', 'data-goal-id': goal.id },
+      h('p', { class: 'goal-text clamp', text: m.displayText(goal.text, student.name),
+               'on:click': e => e.currentTarget.classList.toggle('open') }),
+      edit,
+      objectives.map(o => objectiveBlock(student, o, refresh)),
+      h('div', { style: 'margin-top:10px' },
+        newObj,
+        h('button', {
+          class: 'plain add-objective', type: 'button', text: 'Add objective',
+          'on:click': async () => {
+            const t = newObj.value.trim();
+            if (!t) { toast('Paste the objective text first.', 'warn'); return; }
+            await SLP.store.saveObjective(m.objective({
+              goalId: goal.id, text: t, order: objectives.length,
+            }));
+            await refresh();
+          },
+        })));
+  }
+
+  async function renderDetail(container, student) {
+    const refresh = () => SLP.ui.render();
+    const detail = h('div', { id: 'student-detail' },
+      h('h2', { text: student.name + (student.grade ? ' · grade ' + student.grade : '') }));
+
+    const blocks = await SLP.store.objectivesForStudent(student.id);
+    if (!blocks.length) {
+      detail.appendChild(h('p', { class: 'muted',
+        text: 'No goals yet. Paste the IEP goal below — you only do this once.' }));
+    }
+    for (const { goal, objectives } of blocks) {
+      detail.appendChild(goalBlock(student, goal, objectives, refresh));
+    }
+
+    const newGoal = h('textarea', { class: 'goal-edit', id: 'new-goal-text',
+                                    placeholder: 'Paste the IEP goal text…' });
+    detail.appendChild(h('section', { class: 'panel' },
+      h('h2', { text: 'Add a goal' }),
+      newGoal,
+      h('button', {
+        class: 'primary', id: 'add-goal', type: 'button', text: 'Add goal',
+        'on:click': async () => {
+          const t = newGoal.value.trim();
+          if (!t) { toast('Paste the goal text first.', 'warn'); return; }
+          await SLP.store.saveGoal(m.goal({ studentId: student.id, text: t,
+                                            order: blocks.length }));
+          await refresh();
+        },
+      })));
+
+    // Task 12 appends the history and progress sections here.
+    if (SLP.ui.students.renderAggregation) {
+      await SLP.ui.students.renderAggregation(detail, student);
+    }
+    container.appendChild(detail);
+  }
+
+  SLP.ui.views.students = async (root) => {
+    const students = await SLP.store.listStudents({ activeOnly: true });
+    const q = ui.search.trim().toLowerCase();
+    const shown = q ? students.filter(s => s.name.toLowerCase().includes(q)) : students;
+
+    const search = h('input', { type: 'text', id: 'student-search', placeholder: 'Search…',
+                                value: ui.search });
+    search.addEventListener('input', async () => { ui.search = search.value; await SLP.ui.render(); });
+
+    const list = h('div', { id: 'student-list' },
+      shown.length ? null : h('p', { class: 'muted', text: 'No matching students.' }),
+      shown.map(s =>
+        h('div', { class: 'student-row', 'data-student-id': s.id, 'data-student-name': s.name },
+          h('button', {
+            class: 'linkish open-student grow', type: 'button', text: s.name,
+            'on:click': () => SLP.ui.go({ studentId: s.id }),
+          }))));
+
+    const detail = h('div');
+    const selected = shown.find(s => s.id === SLP.ui.route.studentId) ||
+                     students.find(s => s.id === SLP.ui.route.studentId);
+    if (selected) await renderDetail(detail, selected);
+    else detail.appendChild(h('p', { class: 'empty', text: 'Pick a student to see their goals.' }));
+
+    root.appendChild(h('div', { class: 'split' },
+      h('div', {}, search, list),
+      detail));
+  };
+
+  SLP.ui.students = { fieldEditor };
 })();
 
 // ============================================================

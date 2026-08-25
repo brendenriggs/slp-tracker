@@ -1413,7 +1413,181 @@ SLP.ui = (() => {
     }
   };
 
-  SLP.ui.today = { shiftDate };
+  // --- save queue -------------------------------------------------------
+  // Serialises writes so a fast tab-through cannot interleave two saves on
+  // the same datapoint. flush() lets tests (and the nag banner) await quiet.
+  let chain = Promise.resolve();
+  function enqueue(fn) {
+    chain = chain.then(fn).catch(err => {
+      console.error('save failed', err);
+      SLP.ui.toast('That did not save — ' + err.message, 'error');
+    });
+    return chain;
+  }
+  const flush = () => chain;
+
+  // The slot object a write path needs. For an ad hoc entry the slot is synthetic,
+  // so fall back to the session it already has.
+  function slotOf(entry) {
+    if (entry.slot && entry.slot.id) return entry.slot;
+    return { id: null, ...entry.slot, studentIds: entry.slot.studentIds || [] };
+  }
+
+  function wireValueInput(input, { entry, student, objective, field }) {
+    const save = () => enqueue(async () => {
+      const dp = await SLP.store.recordValue({
+        dateStr: SLP.ui.route.date, slot: slotOf(entry), studentId: student.id,
+        objectiveId: objective.id, fieldId: field.id, raw: input.value,
+      });
+      const cell = dp.values[field.id];
+      input.dataset.entered = String(!!cell.entered);
+      if (!cell.entered) {
+        // Reverted to the pre-filled default — show it, do not leave the box blank.
+        input.value = cell.value === null || cell.value === undefined ? '' : cell.value;
+      }
+      await refreshChrome();
+    });
+    input.addEventListener('change', () => {
+      // A pre-filled field that was tabbed past unchanged is not data entry.
+      const untouched = input.dataset.entered === 'false' &&
+        String(input.value) === String(input.defaultValue);
+      if (untouched) return;
+      save();
+    });
+    input.defaultValue = input.value;
+  }
+
+  function wireNote(box, { entry, student }) {
+    let last = box.value;
+    const save = () => {
+      if (box.value === last) return;
+      last = box.value;
+      enqueue(async () => {
+        await SLP.store.saveNote({ dateStr: SLP.ui.route.date, slot: slotOf(entry),
+                                   studentId: student.id, text: box.value });
+        await refreshChrome();
+      });
+    };
+    box.addEventListener('change', save);
+    box.addEventListener('blur', save);
+  }
+
+  // The actual flip, with no enqueue() of its own — callers control the queue.
+  async function toggleAbsentNow(entry, student, state) {
+    const next = state === 'absent' ? 'present' : 'absent';
+    if (next === 'present') {
+      // Undo: drop the explicit row and let attendance derive from data again.
+      const session = await SLP.store.ensureSession(SLP.ui.route.date, slotOf(entry));
+      const rows = await SLP.db.getAllBy('attendance', 'sessionId', session.id);
+      const row = rows.find(r => r.studentId === student.id);
+      if (row) await SLP.db.del('attendance', row.id);
+    } else {
+      await SLP.store.setAttendance({ dateStr: SLP.ui.route.date, slot: slotOf(entry),
+                                      studentId: student.id, status: 'absent' });
+    }
+    await SLP.ui.render();
+  }
+
+  function toggleAbsent(entry, student, state) {
+    return enqueue(() => toggleAbsentNow(entry, student, state));
+  }
+
+  function wireAbsent(button, ctx) {
+    button.addEventListener('click', () => toggleAbsent(ctx.entry, ctx.student, ctx.state));
+  }
+
+  async function addStudentControl(entry) {
+    const present = new Set(entry.students.map(s => s.id));
+    const available = (await SLP.store.listStudents({ activeOnly: true }))
+      .filter(s => !present.has(s.id));
+    if (!available.length) return null;
+    const select = h('select', { class: 'add-student-select', 'aria-label': 'Add a student to this session' },
+      h('option', { value: '', text: '+ Add student' }),
+      available.map(s => h('option', { value: s.id, text: s.name })));
+    select.addEventListener('change', () => {
+      const id = select.value;
+      if (!id) return;
+      enqueue(async () => {
+        const session = await SLP.store.ensureSession(SLP.ui.route.date, slotOf(entry));
+        await SLP.store.addStudentToSession(session.id, id);
+        await SLP.ui.render();
+      });
+    });
+    return select;
+  }
+
+  let armedRemoval = null;
+  function removeButton({ entry, student }) {
+    if (!entry.session) return null;          // nothing to remove from yet
+    const key = entry.session.id + ':' + student.id;
+    if (armedRemoval === key) {
+      return h('span', { class: 'row-form' },
+        h('span', { class: 'muted', text: 'Discard everything charted for ' + student.name + '?' }),
+        h('button', {
+          class: 'linkish danger-link confirm-remove-student', type: 'button', text: 'Yes, remove',
+          'on:click': () => enqueue(async () => {
+            await SLP.store.removeStudentFromSession(entry.session.id, student.id);
+            armedRemoval = null;
+            await SLP.ui.render();
+          }),
+        }),
+        h('button', {
+          class: 'linkish cancel-remove-student', type: 'button', text: 'Cancel',
+          'on:click': async () => { armedRemoval = null; await SLP.ui.render(); },
+        }));
+    }
+    return h('button', {
+      class: 'linkish remove-student', type: 'button', text: 'Remove',
+      title: 'For a scheduled student who did not show, use Absent — the miss should stay visible.',
+      'on:click': async () => { armedRemoval = key; await SLP.ui.render(); },
+    });
+  }
+
+  // Update just the counter and chip without a full re-render, so focus is never
+  // stolen mid-typing. A full render happens on structural changes only.
+  async function refreshChrome() {
+    const label = document.querySelector('#charted-count');
+    if (!label) return;
+    const plan = await SLP.store.planForDate(SLP.ui.route.date);
+    const { charted, total } = SLP.derive.chartedCount(plan);
+    label.textContent = charted + ' of ' + total + ' charted';
+    for (const entry of plan) {
+      for (const s of entry.students) {
+        const chip = document.querySelector('.student-block[data-student-id="' + s.id + '"] .state-chip');
+        if (!chip) continue;
+        const state = SLP.derive.studentState(entry, s.id);
+        chip.dataset.state = state;
+        chip.textContent = state === 'none' ? 'not charted'
+                         : state === 'present' ? 'present' : state;
+      }
+    }
+  }
+
+  // Alt+A toggles absence for whichever student block has focus. The listener
+  // itself is synchronous so enqueue() runs synchronously within dispatchEvent —
+  // an async listener would delay enqueue() past its first await, and a caller
+  // that awaits flush() right after dispatching the keydown would miss the task.
+  document.addEventListener('keydown', (e) => {
+    if (!e.altKey || SLP.ui.route.tab !== 'today') return;
+    if (e.key === '.') { e.preventDefault(); SLP.ui.go({ date: SLP.ui.todayStr() }); return; }
+    if (e.key !== 'a' && e.key !== 'A') return;
+    const block = e.target.closest && e.target.closest('.student-block');
+    if (!block) return;
+    e.preventDefault();
+    enqueue(async () => {
+      const plan = await SLP.store.planForDate(SLP.ui.route.date);
+      for (const entry of plan) {
+        const student = entry.students.find(s => s.id === block.dataset.studentId);
+        if (student) {
+          await toggleAbsentNow(entry, student, SLP.derive.studentState(entry, student.id));
+          return;
+        }
+      }
+    });
+  });
+
+  SLP.ui.today = { shiftDate, flush, wireValueInput, wireNote, wireAbsent,
+                   addStudentControl, removeButton };
 })();
 
 // ============================================================

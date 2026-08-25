@@ -163,6 +163,92 @@ test('deactivating a student keeps their history', async () => {
   eq((await w.SLP.db.getAll('datapoints')).length, 1, 'but their data survives');
 });
 
+// --- deleting goals and objectives -------------------------------------
+// A goal owns objectives, and objectives own the data charted against them.
+// Deleting the parent has to take the children with it or the database keeps
+// rows nothing can ever read again — invisible on screen, still in the backup.
+
+async function chart(w, { ada, obj, slot }, raw) {
+  const fieldId = obj.fields.find(f => f.role === 'achieved').id;
+  await w.SLP.store.recordValue({ dateStr: MONDAY, slot, studentId: ada.id,
+                                  objectiveId: obj.id, fieldId, raw });
+}
+
+test('deleting a goal removes the goal', async () => {
+  const w = await loadApp();
+  const { goal } = await seedCaseload(w);
+  await w.SLP.store.deleteGoal(goal.id);
+  eq(await w.SLP.db.get('goals', goal.id), undefined, 'goal is gone');
+});
+
+test('deleting a goal removes its objectives', async () => {
+  const w = await loadApp();
+  const { goal, obj } = await seedCaseload(w);
+  await w.SLP.store.deleteGoal(goal.id);
+  eq((await w.SLP.db.getAll('objectives')).length, 0,
+     'an objective cannot outlive the goal it belongs to');
+});
+
+test('deleting a goal removes the data charted against its objectives', async () => {
+  const w = await loadApp();
+  const seed = await seedCaseload(w);
+  await chart(w, seed, '3');
+  eq((await w.SLP.db.getAll('datapoints')).length, 1, 'charted once, to be sure');
+  await w.SLP.store.deleteGoal(seed.goal.id);
+  eq((await w.SLP.db.getAll('datapoints')).length, 0,
+     'orphaned datapoints would survive in the backup with nothing to read them');
+});
+
+test('deleting a goal leaves other goals and their data alone', async () => {
+  const w = await loadApp();
+  const seed = await seedCaseload(w);
+  const m = w.SLP.model;
+  const keep = m.goal({ studentId: seed.ada.id, text: 'STUDENT will do something else' });
+  await w.SLP.store.saveGoal(keep);
+  const keepObj = m.objective({ goalId: keep.id, text: 'STUDENT will keep this' });
+  await w.SLP.store.saveObjective(keepObj);
+  await chart(w, seed, '3');
+  await chart(w, { ...seed, obj: keepObj }, '2');
+
+  await w.SLP.store.deleteGoal(seed.goal.id);
+
+  eq((await w.SLP.store.goalsFor(seed.ada.id)).map(g => g.id), [keep.id], 'the other goal stays');
+  eq((await w.SLP.db.getAll('objectives')).map(o => o.id), [keepObj.id], 'so does its objective');
+  eq((await w.SLP.db.getAll('datapoints')).map(d => d.objectiveId), [keepObj.id],
+     'and the data charted against it');
+});
+
+test('a goal knows what deleting it would cost', async () => {
+  const w = await loadApp();
+  const seed = await seedCaseload(w);
+  const m = w.SLP.model;
+  const second = m.objective({ goalId: seed.goal.id, text: 'STUDENT will also do this' });
+  await w.SLP.store.saveObjective(second);
+  await chart(w, seed, '3');
+  await chart(w, { ...seed, obj: second }, '2');
+
+  const stakes = await w.SLP.store.goalStakes(seed.goal.id);
+  eq(stakes.objectives, 2, 'both objectives counted');
+  eq(stakes.sessions, 1, 'two objectives charted in one session is one session, not two');
+});
+
+test('an untouched goal costs nothing to delete', async () => {
+  const w = await loadApp();
+  const goal = w.SLP.model.goal({ studentId: 'nobody', text: 'STUDENT will do a thing' });
+  await w.SLP.store.saveGoal(goal);
+  const stakes = await w.SLP.store.goalStakes(goal.id);
+  eq(stakes, { objectives: 0, sessions: 0 }, 'nothing hangs off it');
+});
+
+test('deleting an objective removes the data charted against it', async () => {
+  const w = await loadApp();
+  const seed = await seedCaseload(w);
+  await chart(w, seed, '3');
+  await w.SLP.store.deleteObjective(seed.obj.id);
+  eq((await w.SLP.db.getAll('datapoints')).length, 0,
+     'the confirmation promises "everything charted against it" — it has to mean it');
+});
+
 test('students list is sorted by name', async () => {
   const w = await loadApp();
   const m = w.SLP.model;

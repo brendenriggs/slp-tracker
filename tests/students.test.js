@@ -321,6 +321,78 @@ test('objective deletion needs the second click', async () => {
      'one click only arms it — this destroys collected data');
 });
 
+// --- deleting a goal ----------------------------------------------------
+// She adds a goal by pasting IEP text, and sometimes the text is wrong or the
+// goal is a duplicate. Without this she is stuck with it.
+const goalSel = goal => '.goal-block[data-goal-id="' + goal.id + '"]';
+
+test('deleting a goal removes it', async () => {
+  const w = await loadApp();
+  const { ada, goal } = await seedObjective(w);
+  const doc = await openStudents(w, ada.id);
+  doc.querySelector(goalSel(goal) + ' .delete-goal').click();      // arms the confirm
+  await w.SLP.ui.render();
+  doc.querySelector(goalSel(goal) + ' .confirm-delete-goal').click();
+  await w.SLP.ui.render();
+  eq((await w.SLP.store.goalsFor(ada.id)).length, 0, 'goal deleted');
+  eq((await w.SLP.db.getAll('objectives')).length, 0, 'and it took its objective with it');
+});
+
+test('goal deletion needs the second click', async () => {
+  const w = await loadApp();
+  const { ada, goal } = await seedObjective(w);
+  const doc = await openStudents(w, ada.id);
+  doc.querySelector(goalSel(goal) + ' .delete-goal').click();
+  await w.SLP.ui.render();
+  eq((await w.SLP.store.goalsFor(ada.id)).length, 1,
+     'one click only arms it — this destroys collected data');
+});
+
+test('backing out of a goal deletion leaves it alone', async () => {
+  const w = await loadApp();
+  const { ada, goal } = await seedObjective(w);
+  const doc = await openStudents(w, ada.id);
+  doc.querySelector(goalSel(goal) + ' .delete-goal').click();
+  await w.SLP.ui.render();
+  doc.querySelector(goalSel(goal) + ' .cancel-delete-goal').click();
+  await w.SLP.ui.render();
+  eq((await w.SLP.store.goalsFor(ada.id)).length, 1, 'still there');
+  assert(!doc.querySelector(goalSel(goal) + ' .confirm-delete-goal'), 'and no longer armed');
+});
+
+test('the goal confirmation counts what is at stake', async () => {
+  const w = await loadApp();
+  const { ada, goal, obj } = await seedObjective(w);
+  const slot = w.SLP.model.slot({ dayOfWeek: 1, startTime: '09:00', endTime: '09:30',
+                                  studentIds: [ada.id] });
+  await w.SLP.store.saveSlot(slot);
+  const fieldId = obj.fields.find(f => f.role === 'achieved').id;
+  await w.SLP.store.recordValue({ dateStr: '2026-09-07', slot, studentId: ada.id,
+                                  objectiveId: obj.id, fieldId, raw: '3' });
+
+  const doc = await openStudents(w, ada.id);
+  doc.querySelector(goalSel(goal) + ' .delete-goal').click();
+  await w.SLP.ui.render();
+  const said = doc.querySelector(goalSel(goal) + ' .delete-goal-prompt').textContent;
+  assert(said.includes('1 objective'), 'names the objectives at stake — said: ' + said);
+  assert(said.includes('1 session'), 'and the charted data — said: ' + said);
+});
+
+test('an untouched goal is confirmed without a tally', async () => {
+  const w = await loadApp();
+  const m = w.SLP.model;
+  const ada = m.student({ name: 'Ada' });
+  await w.SLP.store.saveStudent(ada);
+  const goal = m.goal({ studentId: ada.id, text: 'STUDENT will improve' });
+  await w.SLP.store.saveGoal(goal);
+
+  const doc = await openStudents(w, ada.id);
+  doc.querySelector(goalSel(goal) + ' .delete-goal').click();
+  await w.SLP.ui.render();
+  const said = doc.querySelector(goalSel(goal) + ' .delete-goal-prompt').textContent;
+  eq(said, 'Delete this goal?', 'nothing hangs off it, so nothing to warn about');
+});
+
 test('the student heading names a grade the way she would say it', async () => {
   const w = await loadApp();
   const ada = w.SLP.model.student({ name: 'Ada', grade: '3' });

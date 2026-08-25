@@ -201,7 +201,7 @@
 // SLP Session Tracker — one file, no build step, no network.
 // Sections below are ordered by dependency; each only uses those above it.
 // ============================================================
-window.SLP = { version: '1.3.0' };
+window.SLP = { version: '1.4.0' };
 
 // ============================================================
 // SECTION: db — IndexedDB access. Knows stores, not meaning.
@@ -555,7 +555,33 @@ SLP.store = (() => {
     },
     saveGoal: g => db.put('goals', Object.assign(g, { updatedAt: m.now() })),
     saveObjective: o => db.put('objectives', Object.assign(o, { updatedAt: m.now() })),
-    deleteObjective: id => db.del('objectives', id),
+    // An objective owns the data charted against it; a goal owns its objectives.
+    // Deleting a parent without its children leaves rows nothing can ever read
+    // again — off the screen, but still in every backup she makes afterwards.
+    async deleteObjective(id) {
+      for (const dp of await db.getAllBy('datapoints', 'objectiveId', id)) {
+        await db.del('datapoints', dp.id);
+      }
+      await db.del('objectives', id);
+    },
+    // What the confirmation has to say out loud. Sessions are counted distinct:
+    // two objectives charted on the same day cost her one session, not two.
+    async goalStakes(id) {
+      const objectives = await db.getAllBy('objectives', 'goalId', id);
+      const sessions = new Set();
+      for (const o of objectives) {
+        for (const dp of await db.getAllBy('datapoints', 'objectiveId', o.id)) {
+          sessions.add(dp.sessionId);
+        }
+      }
+      return { objectives: objectives.length, sessions: sessions.size };
+    },
+    async deleteGoal(id) {
+      for (const o of await db.getAllBy('objectives', 'goalId', id)) {
+        await this.deleteObjective(o.id);
+      }
+      await db.del('goals', id);
+    },
 
     // --- schedule ---
     async listSlots() {
@@ -1426,7 +1452,17 @@ SLP.ui = (() => {
           }));
   }
 
-  function goalBlock(student, goal, objectives, refresh) {
+  // A tally of zeroes is noise, so an untouched goal just asks. Once there are
+  // objectives — or worse, charted sessions — the prompt says what it is taking.
+  function goalDeletePrompt({ objectives, sessions }) {
+    if (!objectives) return 'Delete this goal?';
+    const objs = 'its ' + objectives + (objectives === 1 ? ' objective' : ' objectives');
+    if (!sessions) return 'Delete this goal and ' + objs + '?';
+    return 'Delete this goal, ' + objs + ', and the data charted in ' +
+           sessions + (sessions === 1 ? ' session' : ' sessions') + '?';
+  }
+
+  function goalBlock(student, goal, objectives, refresh, stakes) {
     const edit = h('textarea', { class: 'goal-edit', value: goal.text });
     edit.addEventListener('blur', async () => {
       const v = edit.value.trim();
@@ -1456,7 +1492,32 @@ SLP.ui = (() => {
             }));
             await refresh();
           },
-        })));
+        })),
+      // Last in the block, well below the controls she uses daily: distance and a
+      // second click both have to fail before an IEP goal and its data go.
+      ui.armedDelete === goal.id
+        ? h('div', { class: 'row-form', style: 'margin-top:10px' },
+            h('span', { class: 'muted delete-goal-prompt',
+                        text: goalDeletePrompt(stakes || { objectives: 0, sessions: 0 }) }),
+            h('button', {
+              class: 'plain danger-link confirm-delete-goal', type: 'button',
+              text: 'Yes, delete',
+              'on:click': async () => {
+                await SLP.store.deleteGoal(goal.id);
+                ui.armedDelete = null;
+                toast('Goal deleted.', 'ok');
+                await refresh();
+              },
+            }),
+            h('button', {
+              class: 'plain cancel-delete-goal', type: 'button', text: 'Keep it',
+              'on:click': async () => { ui.armedDelete = null; await refresh(); },
+            }))
+        : h('button', {
+            class: 'linkish danger-link delete-goal', type: 'button', text: 'Delete goal',
+            style: 'margin-top:10px',
+            'on:click': async () => { ui.armedDelete = goal.id; await refresh(); },
+          }));
   }
 
   // The heading is also the roster row: it is the one place her name, grade and school
@@ -1534,7 +1595,10 @@ SLP.ui = (() => {
         text: 'No goals yet. Paste the IEP goal below — you only do this once.' }));
     }
     for (const { goal, objectives } of blocks) {
-      detail.appendChild(goalBlock(student, goal, objectives, refresh));
+      // Only the armed goal pays for the count — the common render touches no extra rows.
+      const stakes = ui.armedDelete === goal.id
+        ? await SLP.store.goalStakes(goal.id) : null;
+      detail.appendChild(goalBlock(student, goal, objectives, refresh, stakes));
     }
 
     const newGoal = h('textarea', { class: 'goal-edit', id: 'new-goal-text',

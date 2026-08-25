@@ -12,3 +12,7 @@ desktop.ini
 slp-data-*.json
 *-backup.json
 data/
+
+# Test scratch output
+tests/.chrome-profile/
+tests/chrome.log

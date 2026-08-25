@@ -1,0 +1,77 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>SLP tracker tests</title>
+<body>
+<iframe id="app-frame" style="width:1200px;height:800px;border:1px solid #ccc"></iframe>
+<script>
+// --- tiny TAP framework -------------------------------------------------
+const TESTS = [];
+function test(name, fn) { TESTS.push({ name, fn }); }
+function out(s) { console.log('TAP: ' + s); }
+
+function assert(cond, msg) { if (!cond) throw new Error(msg || 'assertion failed'); }
+function eq(actual, expected, msg) {
+  const a = JSON.stringify(actual), b = JSON.stringify(expected);
+  if (a !== b) throw new Error((msg || 'not equal') + ' — expected ' + b + ', got ' + a);
+}
+async function throws(fn, msg) {
+  try { await fn(); } catch (e) { return e; }
+  throw new Error(msg || 'expected a throw, got none');
+}
+
+// --- app loader ---------------------------------------------------------
+// Wipes the database, then loads a fresh copy of the real app file.
+function wipeDatabase() {
+  return new Promise(resolve => {
+    const req = indexedDB.deleteDatabase('slp-tracker');
+    req.onsuccess = req.onerror = req.onblocked = () => resolve();
+  });
+}
+
+function loadApp() {
+  return wipeDatabase().then(() => new Promise((resolve, reject) => {
+    const frame = document.getElementById('app-frame');
+    const timer = setTimeout(() => reject(new Error('app load timed out')), 10000);
+    frame.onload = () => {
+      clearTimeout(timer);
+      try {
+        const w = frame.contentWindow;
+        (w.SLP && w.SLP.ready ? w.SLP.ready : Promise.resolve()).then(() => resolve(w), reject);
+      } catch (e) {
+        // Cross-origin access throws when the frame navigated to an error
+        // page (e.g. the target file is missing) instead of the app.
+        reject(e);
+      }
+    };
+    // cache-bust so each load re-executes the app from scratch
+    frame.src = '../slp-tracker.html?t=' + Date.now();
+  }));
+}
+
+// --- runner -------------------------------------------------------------
+// Deferred to the `load` event (not invoked immediately): classic <script>
+// tags block the parser and execute in document order, so an IIFE that
+// reads TESTS synchronously here would run — and find TESTS empty — before
+// the <script src="*.test.js"> tags below it have had a chance to execute.
+// `load` fires only after the whole document, including those tags, is done.
+window.addEventListener('load', async () => {
+  let passed = 0, failed = 0, n = 0;
+  for (const t of TESTS) {
+    n++;
+    try {
+      await t.fn();
+      passed++;
+      out('ok ' + n + ' - ' + t.name);
+    } catch (e) {
+      failed++;
+      out('not ok ' + n + ' - ' + t.name);
+      out('#   ' + (e && e.message ? e.message : String(e)));
+      if (e && e.stack) out('#   ' + e.stack.split('\n')[1]);
+    }
+  }
+  out('# done ' + n + ' tests, ' + passed + ' passed, ' + failed + ' failed');
+  window.close();
+});
+</script>
+<script src="smoke.test.js"></script>
+</body>

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SLP Session Tracker</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1a1a1a; --muted: #666; --line: #d8d8d8;
+    --accent: #2b6cb0; --warn: #b7791f; --danger: #c53030; --ok: #2f855a;
+    --field: #ffffff; --row: #fafafa;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  #app { max-width: 1100px; margin: 0 auto; padding: 0 16px 64px; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+// ============================================================
+// SLP Session Tracker — one file, no build step, no network.
+// Sections below are ordered by dependency; each only uses those above it.
+// ============================================================
+window.SLP = { version: '0.1.0' };
+
+// ============================================================
+// SECTION: boot — wire everything up.
+// ============================================================
+SLP.ready = Promise.resolve();
+</script>
+</body>
+</html>

@@ -16,3 +16,6 @@ data/
 # Test scratch output
 tests/.chrome-profile/
 tests/chrome.log
+
+# Scratch space for files handed over during a session (test fixtures, generated data).
+tmp/

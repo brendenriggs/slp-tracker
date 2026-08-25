@@ -126,6 +126,21 @@
   .ratio { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
   .note-input { width: 100%; min-height: 42px; margin-top: 6px; resize: vertical; }
   @media (max-width: 820px) { .objective-row { grid-template-columns: 1fr; } }
+
+  .history-row { border-bottom: 1px solid var(--line); padding: 8px 0; font-size: 14px; }
+  .history-row:last-child { border-bottom: none; }
+  .history-date { font-weight: 600; }
+  .history-data { color: var(--muted); font-size: 13px; }
+  .history-note { margin: 3px 0 0; }
+  .objective-chart { margin: 14px 0; }
+  .objective-chart svg { display: block; max-width: 100%; height: auto;
+                         border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
+  .chart-line { fill: none; stroke: var(--accent); stroke-width: 2; }
+  .chart-point { fill: var(--accent); }
+  .chart-axis { stroke: var(--line); stroke-width: 1; }
+  .chart-tick { fill: var(--muted); font-size: 10px; }
+  .mastery { font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .mastery.met { color: var(--ok); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -576,6 +591,36 @@ SLP.store = (() => {
         }
       }
       return session;
+    },
+
+    async historyFor(studentId, { from = null, to = null } = {}) {
+      const sessions = (await db.getAll('sessions'))
+        .filter(s => s.roster.includes(studentId))
+        .filter(s => (!from || s.date >= from) && (!to || s.date <= to))
+        .sort((a, b) => b.date.localeCompare(a.date) ||
+                        b.startTime.localeCompare(a.startTime));
+      const out = [];
+      for (const session of sessions) {
+        out.push({
+          session,
+          attendance: await rowFor('attendance', session.id, studentId),
+          note: await rowFor('notes', session.id, studentId),
+          datapoints: (await db.getAllBy('datapoints', 'sessionId', session.id))
+            .filter(d => d.studentId === studentId),
+        });
+      }
+      return out;
+    },
+
+    async rowsForObjective(studentId, objectiveId) {
+      const dps = (await db.getAllBy('datapoints', 'objectiveId', objectiveId))
+        .filter(d => d.studentId === studentId);
+      const rows = [];
+      for (const dp of dps) {
+        const session = await db.get('sessions', dp.sessionId);
+        if (session) rows.push({ date: session.date, dp });
+      }
+      return rows.sort((a, b) => a.date.localeCompare(b.date));
     },
   };
 })();
@@ -1588,6 +1633,166 @@ SLP.ui = (() => {
 
   SLP.ui.today = { shiftDate, flush, wireValueInput, wireNote, wireAbsent,
                    addStudentControl, removeButton };
+})();
+
+// ============================================================
+// SECTION: ui.aggregation — history, per-objective charts, mastery.
+// Each objective owns its chart and its scale. Never compare across objectives.
+// ============================================================
+(() => {
+  const { h } = SLP.ui;
+  const m = SLP.model;
+  const SVG = 'http://www.w3.org/2000/svg';
+  const filter = { from: '', to: '' };
+
+  const svgEl = (tag, attrs) => {
+    const el = document.createElementNS(SVG, tag);
+    for (const [k, v] of Object.entries(attrs || {})) el.setAttribute(k, v);
+    return el;
+  };
+  const prettyDate = ds => {
+    const [y, mo, d] = ds.split('-').map(Number);
+    return new Date(y, mo - 1, d).toLocaleDateString(undefined,
+      { month: 'long', day: 'numeric', year: 'numeric' });
+  };
+
+  function chart(series) {
+    const pts = series.points;
+    const W = 520, H = 150, PAD_L = 34, PAD_B = 22, PAD_T = 10, PAD_R = 10;
+    const svg = svgEl('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img',
+                               'aria-label': series.label + ' over time' });
+
+    const isPct = series.kind === 'pct';
+    const values = pts.map(p => p.value);
+    const max = isPct ? 100 : Math.max(1, ...values);
+    const min = isPct ? 0 : Math.min(0, ...values);
+    const span = (max - min) || 1;
+
+    const x = i => pts.length === 1
+      ? (PAD_L + (W - PAD_L - PAD_R) / 2)                 // one point sits centred
+      : PAD_L + (i / (pts.length - 1)) * (W - PAD_L - PAD_R);
+    const y = v => PAD_T + (1 - (v - min) / span) * (H - PAD_T - PAD_B);
+
+    svg.appendChild(svgEl('line', { class: 'chart-axis', x1: PAD_L, y1: PAD_T,
+                                    x2: PAD_L, y2: H - PAD_B }));
+    svg.appendChild(svgEl('line', { class: 'chart-axis', x1: PAD_L, y1: H - PAD_B,
+                                    x2: W - PAD_R, y2: H - PAD_B }));
+    for (const [v, label] of [[max, isPct ? '100%' : String(max)], [min, isPct ? '0%' : String(min)]]) {
+      const t = svgEl('text', { class: 'chart-tick', x: 4, y: y(v) + 3 });
+      t.textContent = label;
+      svg.appendChild(t);
+    }
+
+    if (pts.length > 1) {
+      svg.appendChild(svgEl('polyline', {
+        class: 'chart-line',
+        points: pts.map((p, i) => x(i) + ',' + y(p.value)).join(' '),
+      }));
+    }
+    pts.forEach((p, i) => {
+      const c = svgEl('circle', { class: 'chart-point', cx: x(i), cy: y(p.value), r: 3.5 });
+      c.setAttribute('data-date', p.date);
+      c.setAttribute('data-value', String(p.value));
+      const title = svgEl('title', {});
+      title.textContent = prettyDate(p.date) + ' — ' + (p.label || p.value);
+      c.appendChild(title);
+      svg.appendChild(c);
+    });
+    return svg;
+  }
+
+  async function objectiveCharts(student, container) {
+    const blocks = await SLP.store.objectivesForStudent(student.id);
+    for (const { objectives } of blocks) {
+      for (const objective of objectives) {
+        const rows = await SLP.store.rowsForObjective(student.id, objective.id);
+        const box = h('div', { class: 'objective-chart', 'data-objective-id': objective.id },
+          h('p', { class: 'objective-text clamp',
+                   text: m.displayText(objective.text, student.name),
+                   'on:click': e => e.currentTarget.classList.toggle('open') }));
+
+        const allSeries = SLP.derive.series(objective, rows)
+          .filter(s => s.points.length);
+        if (!allSeries.length) {
+          box.appendChild(h('p', { class: 'muted', text: 'No data yet.' }));
+        } else {
+          for (const s of allSeries) {
+            box.appendChild(h('p', { class: 'muted', text: s.label }));
+            box.appendChild(chart(s));
+          }
+          const mast = SLP.derive.mastery(objective, rows);
+          if (mast) {
+            box.appendChild(h('p', {
+              class: 'mastery' + (mast.mastered ? ' met' : ''),
+              text: mast.mastered
+                ? 'Criterion met in all ' + mast.of + ' of the last ' + mast.of + ' sessions.'
+                : 'Met criterion in ' + mast.met + ' of ' + mast.of + ' recent sessions.',
+            }));
+          }
+        }
+        container.appendChild(box);
+      }
+    }
+  }
+
+  async function historySection(student) {
+    const rows = await SLP.store.historyFor(student.id,
+      { from: filter.from || null, to: filter.to || null });
+
+    const objectives = {};
+    for (const { objectives: os } of await SLP.store.objectivesForStudent(student.id)) {
+      for (const o of os) objectives[o.id] = o;
+    }
+
+    const from = h('input', { type: 'date', id: 'history-from', value: filter.from });
+    const to = h('input', { type: 'date', id: 'history-to', value: filter.to });
+    from.addEventListener('change', async () => { filter.from = from.value; await SLP.ui.render(); });
+    to.addEventListener('change', async () => { filter.to = to.value; await SLP.ui.render(); });
+
+    const list = h('div', { id: 'session-history' });
+    if (!rows.length) list.appendChild(h('p', { class: 'muted', text: 'No sessions in this range.' }));
+
+    for (const row of rows) {
+      const summary = row.datapoints.map(dp => {
+        const o = objectives[dp.objectiveId];
+        if (!o) return null;
+        const r = m.ratio(o, dp);
+        if (r) return o.fields.find(f => f.role === 'achieved').label +
+                      ' ' + r.achieved + '/' + r.target + ' (' + r.pct + '%)';
+        return o.fields.filter(f => dp.values[f.id] && dp.values[f.id].entered)
+          .map(f => f.label + ' ' + dp.values[f.id].value).join(', ');
+      }).filter(Boolean).join(' · ');
+
+      list.appendChild(h('div', { class: 'history-row' },
+        h('div', {},
+          h('span', { class: 'history-date',
+                      text: prettyDate(row.session.date) + ' · ' + row.session.startTime }),
+          ' ',
+          h('span', { class: 'state-chip',
+                      'data-state': row.attendance ? row.attendance.status : 'none',
+                      text: row.attendance ? row.attendance.status : 'not charted' })),
+        summary ? h('div', { class: 'history-data', text: summary }) : null,
+        row.note && row.note.text ? h('p', { class: 'history-note', text: row.note.text }) : null));
+    }
+
+    return h('section', { class: 'panel' },
+      h('h2', { text: 'Session history' }),
+      h('div', { class: 'row-form' }, 'From', from, 'to', to,
+        h('button', { class: 'plain', type: 'button', text: 'Clear',
+                      'on:click': async () => { filter.from = ''; filter.to = '';
+                                                await SLP.ui.render(); } })),
+      list);
+  }
+
+  SLP.ui.students.renderAggregation = async (container, student) => {
+    const progress = h('section', { class: 'panel', id: 'progress' },
+      h('h2', { text: 'Progress' }));
+    await objectiveCharts(student, progress);
+    container.appendChild(progress);
+    container.appendChild(await historySection(student));
+  };
+
+  SLP.ui.chart = chart;
 })();
 
 // ============================================================

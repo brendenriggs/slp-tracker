@@ -127,6 +127,12 @@
   .student-block:last-child { border-bottom: none; }
   .student-block.is-absent .objective-row { opacity: .4; }
   .student-head { display: flex; gap: 9px; align-items: baseline; }
+  /* Wider than it looks: the hit area has to survive a fingertip on a laptop
+     trackpad between sessions, so it is padded well past the glyph. */
+  .disclosure { background: none; border: none; color: var(--muted); cursor: pointer;
+                font-size: 12px; line-height: 1; padding: 4px 6px; margin-left: -6px; }
+  .disclosure:hover { color: var(--fg); }
+  .student-charted { font-size: 12px; color: var(--muted); }
   .student-name { font-weight: 600; }
   .state-chip { font-size: 12px; padding: 1px 8px; border-radius: 999px;
                 border: 1px solid var(--line); color: var(--muted); }
@@ -201,7 +207,7 @@
 // SLP Session Tracker — one file, no build step, no network.
 // Sections below are ordered by dependency; each only uses those above it.
 // ============================================================
-window.SLP = { version: '1.4.1' };
+window.SLP = { version: '1.5.0' };
 
 // ============================================================
 // SECTION: db — IndexedDB access. Knows stores, not meaning.
@@ -765,6 +771,18 @@ SLP.derive = (() => {
     return { charted, total };
   }
 
+  // How much of one student's data entry is already done. Today collapses a
+  // student's objectives by default, so the card has to be able to say what it
+  // is putting away — hidden data that gives no sign of itself is the mistake
+  // deleteObjective used to make.
+  function objectivesCharted(entry, studentId) {
+    const objectives = (entry.objectives[studentId] || []).flatMap(b => b.objectives);
+    const dps = entry.datapoints[studentId] || {};
+    let charted = 0;
+    for (const o of objectives) if (dps[o.id] && m.hasEnteredData(dps[o.id])) charted++;
+    return { charted, total: objectives.length };
+  }
+
   function pair(objective) {
     const a = objective.fields.filter(f => f.role === 'achieved');
     const t = objective.fields.filter(f => f.role === 'target');
@@ -829,7 +847,8 @@ SLP.derive = (() => {
     return (known || []).find(k => String(k).toLowerCase() === key) || name;
   }
 
-  return { studentState, chartedCount, series, mastery, pair, schools, canonicalSchool };
+  return { studentState, chartedCount, objectivesCharted, series, mastery, pair,
+           schools, canonicalSchool };
 })();
 
 // ============================================================
@@ -1746,6 +1765,13 @@ SLP.ui = (() => {
     return fmt(d);
   }
 
+  // Whose data entry she has opened. Survives re-render within the tab — every
+  // absent toggle runs doRender(), which clears #app, so a card that remembered
+  // its own state would slam shut whenever she touched someone else's row.
+  // In memory only: this is where she is right now, not a preference.
+  const expanded = new Set();
+  let expandedFor = null;      // the date those ids belong to
+
   const LONG = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
   const longDate = dateStr => parse(dateStr).toLocaleDateString(undefined, LONG);
 
@@ -1766,6 +1792,13 @@ SLP.ui = (() => {
     }
     return h('label', { class: 'value-field' },
       h('span', { class: 'cap', text: field.label }), input);
+  }
+
+  // Shared by the render and by refreshChrome's surgical update, so the head can
+  // never drift from what derive says is charted.
+  function setCharted(label, { charted, total }) {
+    label.hidden = !charted;
+    label.textContent = charted ? charted + ' of ' + total + ' charted' : '';
   }
 
   function objectiveRow(entry, student, objective) {
@@ -1803,35 +1836,65 @@ SLP.ui = (() => {
       'aria-label': 'Session note for ' + student.name });
     if (SLP.ui.today.wireNote) SLP.ui.today.wireNote(noteBox, { entry, student });
 
+    // Data entry is put away by default: she writes the session up in prose
+    // first and extrapolates it into objective data later.
+    const area = h('div', { class: 'objective-area', hidden: true });
+    const disclosure = h('button', { class: 'disclosure', type: 'button' });
+    const setOpen = open => {
+      area.hidden = !open;
+      disclosure.textContent = open ? '▾' : '▸';
+      disclosure.setAttribute('aria-expanded', String(open));
+      disclosure.setAttribute('aria-label',
+        (open ? 'Hide' : 'Show') + ' data entry for ' + student.name);
+    };
+    // Collapsing must not hide data silently, so a charted card says so from the
+    // outside. Nothing charted means nothing hidden, and the count would be
+    // noise on every student she has not reached yet.
+    const chartedLabel = h('span', { class: 'student-charted' });
+    setCharted(chartedLabel, SLP.derive.objectivesCharted(entry, student.id));
+
+    setOpen(expanded.has(student.id));
+    disclosure.addEventListener('click', () => {
+      const open = area.hidden;
+      if (open) expanded.add(student.id); else expanded.delete(student.id);
+      setOpen(open);
+    });
+
     const block = h('div', {
       class: 'student-block' + (state === 'absent' ? ' is-absent' : ''),
       'data-student-id': student.id, 'data-student-name': student.name,
     },
       h('div', { class: 'student-head' },
+        disclosure,
         h('span', { class: 'student-name', text: student.name }),
         chip,
         att && att.participation === 'added' ? h('span', { class: 'added-chip', text: 'added' }) : null,
+        chartedLabel,
         h('span', { class: 'grow' }),
         absentBtn,
         SLP.ui.today.removeButton ? SLP.ui.today.removeButton({ entry, student }) : null));
 
     for (const { goal, objectives } of blocks) {
       // Goal once per student, collapsed — not repeated above each objective.
-      block.appendChild(h('p', { class: 'goal-line clamp',
+      area.appendChild(h('p', { class: 'goal-line clamp',
         text: m.displayText(goal.text, student.name),
         'on:click': e => e.currentTarget.classList.toggle('open') }));
-      for (const o of objectives) block.appendChild(objectiveRow(entry, student, o));
+      for (const o of objectives) area.appendChild(objectiveRow(entry, student, o));
     }
     if (!blocks.length) {
-      block.appendChild(h('p', { class: 'goal-line',
+      area.appendChild(h('p', { class: 'goal-line',
         text: 'No goals set up yet — add them on the Students tab.' }));
     }
+    block.appendChild(area);
     block.appendChild(noteBox);
     return block;
   }
 
   SLP.ui.views.today = async (root) => {
     const date = SLP.ui.route.date;
+    // A different day is a fresh page. Only re-renders of the day she is on keep
+    // their open cards.
+    if (date !== expandedFor) { expanded.clear(); expandedFor = date; }
     const plan = await SLP.store.planForDate(date);
     const { charted, total } = SLP.derive.chartedCount(plan);
 
@@ -2011,12 +2074,17 @@ SLP.ui = (() => {
     label.textContent = charted + ' of ' + total + ' charted';
     for (const entry of plan) {
       for (const s of entry.students) {
-        const chip = document.querySelector('.student-block[data-student-id="' + s.id + '"] .state-chip');
-        if (!chip) continue;
-        const state = SLP.derive.studentState(entry, s.id);
-        chip.dataset.state = state;
-        chip.textContent = state === 'none' ? 'not charted'
-                         : state === 'present' ? 'present' : state;
+        const block = document.querySelector('.student-block[data-student-id="' + s.id + '"]');
+        if (!block) continue;
+        const chip = block.querySelector('.state-chip');
+        if (chip) {
+          const state = SLP.derive.studentState(entry, s.id);
+          chip.dataset.state = state;
+          chip.textContent = state === 'none' ? 'not charted'
+                           : state === 'present' ? 'present' : state;
+        }
+        const counted = block.querySelector('.student-charted');
+        if (counted) setCharted(counted, SLP.derive.objectivesCharted(entry, s.id));
       }
     }
   }

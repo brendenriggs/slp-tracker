@@ -1,9 +1,10 @@
 # Attendance and makeup debt — design
 
-**Date:** 2026-08-25 · **Status:** approved in chat, spec awaiting review
+**Date:** 2026-08-25 · **Status:** revised after a follow-up from the SLP; awaiting review
 **Origin:** a conversation between Brenden and his wife (the SLP this app is built for),
 in which she asked for "a page that shows my entire caseload and whether they were present
-on their day and received their session."
+on their day and received their session." **Revised the same day**, after she clarified how
+she actually uses the number: quarterly, as a percentage, in progress notes sent home.
 
 ---
 
@@ -26,7 +27,21 @@ Three things came out of that conversation, and they are not the same request:
    to see who she owes, and — separately — whether the schedule as planned even delivers
    the minutes the IEP requires by the end of the service period.
 
-A fourth, unrelated item surfaced in the same conversation and is specified elsewhere:
+4. **A quarterly attendance percentage — the number she actually publishes.** In her words:
+   *"When I send a progress note home quarter one I calculate the percentage of time that
+   they were actually present for their speech session. Quarter two will include both
+   quarter one and quarter two data unless there's been a big change… as in I see a big
+   improvement or a decrease in attendance in quarter two, then I will calculate them
+   separately to show the difference."*
+
+   Three things follow from that, and none of them were in the first draft of this design.
+   The reporting period is **quarterly, not monthly** — monthly was inferred from the shape
+   of her paper form rather than from anything she said. The output is a **percentage, not
+   a count of days**. And the cumulative-versus-split choice is not a feature to build: Q1
+   and Q1+Q2 are two date ranges over the same data, so an arbitrary start/end range covers
+   both, and the "unless there's been a big change" case needs nothing at all.
+
+A fifth, unrelated item surfaced in the same conversation and is specified elsewhere:
 she cannot delete a goal she added. That is being handled as its own small change and is
 **not** part of this design.
 
@@ -37,8 +52,13 @@ she cannot delete a goal she added. That is being handled as its own small chang
 | What creates debt? | Both student absences and her own misses are recorded and visible; **only her misses count toward the deficit.** |
 | Which deficit number? | **Both** — accrued (backward) and projected (forward). |
 | How is the IEP target written? | **OPEN.** Blocked on her answer. Gates Stage 2 only. |
-| Page shape | **Month grid**, mirroring her paper form. |
+| Page shape | **A grid over a date range she picks**, mirroring her paper form. Defaults to the current month; she widens it to a quarter at progress-note time. |
 | How are makeups recorded? | **One-off makeup sessions** booked on a date outside the recurring schedule. |
+| Reporting period | **A start/end date she picks** — not a month, and not a fixed quarter the app knows about. |
+| What is in the attendance denominator? | **Every session offered to the child**, which excludes the ones she missed and the ones the district cancelled. |
+| Minutes or session count? | **Minutes.** Identical to a session count when a student's sessions are all one length; honest when they are not. |
+| Sessions she never charted? | **Excluded from the percentage, and counted in plain sight beside it.** |
+| Do makeups affect the percentage? | **No.** `isMakeup` touches the debt arithmetic only. |
 
 ## What already exists
 
@@ -105,6 +125,12 @@ flat total for the period. **Nothing in Stage 1 depends on this choice.**
 
 ## The arithmetic
 
+Two numbers come off the same attendance rows, and they answer to different people. The
+debt is hers — what she owes and must schedule. The percentage is the child's — what goes
+home to a parent. Keeping them apart is what most of the rules below are protecting.
+
+### Makeup debt
+
 ```
 debt    = Σ minutes( status = missed  AND NOT isMakeup )
 credit  = Σ minutes( status = present AND     isMakeup )
@@ -120,6 +146,47 @@ debt simply stays outstanding.
 A balance of zero or better displays as `—`, never as a positive credit. Over-delivering
 is not a bank balance she can draw down.
 
+### Attendance percentage
+
+Computed over the selected range, in minutes, per student:
+
+```
+offered = Σ minutes( charted, status ∈ {present, absent}, date ≤ today )
+held    = Σ minutes( charted, status = present,           date ≤ today )
+pct     = held / offered
+```
+
+**`missed` and `cancelled` are absent from both lines, and that is the whole point.** A
+session she did not hold, and a day the district closed, were never opportunities the child
+declined. Leaving them in the denominator would put her own paperwork and a snow day onto a
+child's attendance record in a document going home to a parent. Her misses do not vanish —
+they are the debt above, reported separately.
+
+**`isMakeup` does not appear here.** A makeup is simply a session that was offered: held,
+it lands in both lines; no-showed, in `offered` alone. So a student she missed once and then
+made up sits at 8 offered out of 10 rather than 7 out of 9, and the percentage can never
+exceed 100%.
+
+**Uncharted sessions are excluded, and shown.** `deriveAttendance`
+(`slp-tracker.html:492`) writes no row at all for a session with nothing entered against it,
+so uncharted is a real third state and not a silent `present`. Excluding it is the only
+honest option — but excluding it *quietly* lets a quarter with three charted sessions out of
+thirty read as a confident 100%. So the count travels with the number, and the figure is
+styled as provisional whenever it is non-zero:
+
+```
+Ada Chen     78%  · 7 of 9  · 3 uncharted     ← flagged, provisional
+Ben Ortiz    92%  · 11 of 12                  ← nothing missing
+```
+
+**The `date ≤ today` clause is load-bearing too.** A range running to the end of the quarter
+contains sessions that have not happened yet. Those sit out of `offered`, out of `held`, and
+out of the uncharted count — otherwise every quarter in progress would accuse her of being
+behind on paperwork until its final day.
+
+**A student with nothing offered in the range displays `—`.** Not `0%`, which reads as a
+child who never came, and not `NaN`.
+
 ## Views
 
 ### New tab: Attendance
@@ -129,21 +196,33 @@ inside Students.
 
 **Weekdays only.** Her paper form is M–F blocks; weekends would be eight dead columns.
 
-Students in a sticky left column, dates across, horizontal scroll for the month, month
-name with ← → arrows.
+Students in a sticky left column, dates across, horizontal scroll through the range, and a
+**start/end date picker** defaulting to the current month. The sticky right edge carries two
+columns — `%` and `Owed` — both computed over whatever range is showing.
 
 ```
+From [2026-10-01]  to [2026-10-31]
+
                     ┌── week 1 ──┐ ┌── week 2 ──┐
-October 2026        1  2  3   6  7  8  9 10  13 …    Owed
-──────────────────────────────────────────────────────────
-Ada Chen            ✓  ·  ✓   ✓  ·  ✗  ·  ✓   ✓      —
-Ben Ortiz           ·  ✗  ·   ·  ✓  ·  ✓  ·   ·      —
-Cy Alvarez          ✓  ·  –   ✓  ·  ✓  ·  ✗   ✓   −90 min
-Dee Park            ·  ✓  ·   ·  ✓  ·  ▫  ·   ✓   −30 min
+                    1  2  3   6  7  8  9 10  13 …           %                 Owed
+───────────────────────────────────────────────────────────────────────────────────
+Ada Chen            ✓  ·  ✓   ✓  ·  ✗  ·  ✓   ✓     89% · 8 of 9               —
+Ben Ortiz           ·  ✗  ·   ·  ✓  ·  ✓  ·   ·     67% · 2 of 3               —
+Cy Alvarez          ✓  ·  –   ✓  ·  ✓  ·  ✗   ✓     80% · 4 of 5           −90 min
+Dee Park            ·  ✓  ·   ·  ✓  ·  ▫  ·   ✓     75% · 3 of 4 · 1 unch. −30 min
 
 ✓ held   ✗ absent   – I missed   ∅ cancelled   ▫ scheduled, unmarked   · not scheduled
 Ⓜ makeup (held)   ▫ᴹ makeup booked, unmarked
 ```
+
+**One control, two jobs.** Left at its default she marks the current month and scrolls a
+little. Set to a quarter at progress-note time, she does not scroll at all — the two sticky
+columns are the whole answer. Her Q1-versus-Q1-plus-Q2 split is two ranges on this one
+screen, and needs nothing else built.
+
+**No quarter presets in Stage 1.** Her district's quarter boundaries are not in the app, and
+guessing at them would be worse than typing two dates four times a year. If she finds that
+tedious, presets are a small follow-up once we know the dates are stable.
 
 **Student filtering reuses the existing `SLP.ui.studentFilters` component.** It currently
 has a single caller; the grid gives it a second one, which is the arrangement it was
@@ -161,6 +240,12 @@ verdict. Uncommon, but merging would silently hide a miss.
 **Makeup sessions appear as cells on their own date**, with a distinct glyph, even though
 that weekday is not a scheduled day for that student — so a makeup never reads as a
 routine session.
+
+### The same number on the student detail page
+
+She writes progress notes one student at a time. Once `derive` computes the percentage,
+showing it on that student's page — over the same picked range — is nearly free, and it is
+where she will already be looking. A small addition, not a stage of its own.
 
 ### Marking
 
@@ -192,16 +277,17 @@ Booked makeups can be deleted, behind a basic "are you sure?".
 
 ## Reads: the part that needs care
 
-A month grid is roughly 30 students × 22 days. The current code queries per session, per
-store — `getAllBy('attendance', 'sessionId', …)` once per session — which at that size is
+A month grid is roughly 30 students × 22 days, and a quarter closer to 30 × 60. The current
+code queries per session, per store — `getAllBy('attendance', 'sessionId', …)` once per session — which at that size is
 hundreds of IndexedDB round-trips.
 
 Split it:
 
 - **`store.attendanceRange({ from, to })`** — bulk-loads slots, students, sessions in
   range, and attendance rows **once each**. All the IO, no logic. Returns plain data.
-- **`derive.attendanceGrid(data)`** — a pure function turning that into rows and cells.
-  No IndexedDB, no async.
+- **`derive.attendanceGrid(data)`** — a pure function turning that into rows and cells. Each
+  row carries its cells, its owed balance, and `{ pct, held, offered, uncharted }`. No
+  IndexedDB, no async.
 
 This follows the split the codebase already uses (store does IO, `derive` is pure), and it
 means the whole grid — cell states, scheduled-vs-not, the owed arithmetic — is unit
@@ -213,10 +299,16 @@ The pure/IO split is what makes this tractable:
 
 - **`derive.attendanceGrid`** — pure, so the bulk of the coverage goes here with
   hand-built fixtures: scheduled-vs-not cells, two-sessions-in-a-day, makeup cells landing
-  on unscheduled weekdays, month boundaries, a student with no slots at all.
+  on unscheduled weekdays, range boundaries, a student with no slots at all.
 - **The arithmetic** — its own tests, with the double-counting case
   (`missed` on a makeup adds no debt) called out explicitly, because that is the rule most
   likely to be broken by a later well-meaning edit.
+- **The percentage** — its own tests, one per rule a later well-meaning edit could quietly
+  break: `missed` and `cancelled` stay out of the denominator; a held makeup lands in both
+  lines, so the result can never exceed 100%; a session dated after today counts as neither
+  offered nor uncharted; a student with nothing offered renders `—` rather than `0%` or
+  `NaN`; and minutes, not session count, decide the result when a student's sessions differ
+  in length.
 - **`store.attendanceRange`** — harness tests that it returns the right rows for a range,
   and that it does so without a per-session query fan-out.
 - **Session-level bulk marking** — that it writes every roster member, and that it does
@@ -234,11 +326,12 @@ accepted; the seed is restorable from `tmp/slp-test-data.json`.
 ## Staging
 
 **Stage 1 — the complete loop, nothing blocked.**
-Status vocabulary · session-level bulk marking · Attendance tab and month grid ·
-`attendanceRange` / `attendanceGrid` split · Owed column · makeup booking, credit, and
-deletion.
+Status vocabulary · session-level bulk marking · Attendance tab and date-range grid ·
+`attendanceRange` / `attendanceGrid` split · the attendance percentage, in the grid and on
+the student detail page · Owed column · makeup booking, credit, and deletion.
 
-She can accrue debt, see it, and settle it. This is the page she asked for.
+She can accrue debt, see it, and settle it — and she can pull the quarterly percentage her
+progress notes need. This is the page she asked for.
 
 **Stage 2 — blocked on her IEP answer.**
 Service-target fields on `student`, and the forward projection:
@@ -248,6 +341,11 @@ Service-target fields on `student`, and the forward projection:
 
 1. **How is the required service amount written in her IEPs?** Minutes per week, sessions
    × duration, or a flat total for the period. Gates Stage 2 only.
+
+2. **Confirm that "percentage of time" means minutes.** Decided as minutes here, which
+   matches her wording and is identical to a session count whenever a student's sessions are
+   all one length — it diverges only for a student carrying two different durations. Not
+   blocking: if she means session count, it is a one-line change inside a pure function.
 
 ## Explicitly out of scope
 

@@ -334,6 +334,34 @@ test('deleting a makeup takes its rows with it', async () => {
   }
 });
 
+// The third door onto an isMakeup row: Today's Remove control. Removing the only
+// student from a booked makeup deletes that row, and the slotless session it belonged
+// to then has nobody in it — still drawn on Today by planForDate, and unreachable from
+// the grid, whose delete control is gated on isMakeup. Same orphan ADR 0002 documents.
+test('removing the last student from a booked makeup takes the empty session with it', async () => {
+  const w = await loadApp();
+  const { ada } = await attSeed(w);
+  const { session } = await w.SLP.store.bookMakeup({
+    date: '2026-10-16', startTime: '11:00', endTime: '11:30', studentId: ada.id });
+
+  await w.SLP.store.removeStudentFromSession(session.id, ada.id);
+
+  eq(await w.SLP.db.get('sessions', session.id), undefined,
+     'an appointment with nobody in it can never be cancelled from the grid again');
+  eq((await w.SLP.store.planForDate('2026-10-16')).length, 0,
+     'and it must not sit on Today forever as an empty card');
+});
+
+test('emptying a scheduled session leaves it alone — the slot still owns that day', async () => {
+  const w = await loadApp();
+  const { ada, bo, slot } = await attSeed(w);
+  const session = await w.SLP.store.ensureSession(ATT_MONDAY, slot);
+  await w.SLP.store.removeStudentFromSession(session.id, ada.id);
+  await w.SLP.store.removeStudentFromSession(session.id, bo.id);
+  assert(await w.SLP.db.get('sessions', session.id),
+     'the cleanup is for slotless bookings only — a recurring session is still on her schedule');
+});
+
 test('two makeups on one day do not write into each other', async () => {
   const w = await loadApp();
   const { ada, bo } = await attSeed(w);

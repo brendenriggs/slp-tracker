@@ -813,6 +813,24 @@ SLP.store = (() => {
       return row;
     },
 
+    // Undoing an explicit mark — Today's Absent toggle clicked a second time. It is a
+    // withdrawal, not a deletion, and it runs through deriveAttendance rather than a
+    // raw db.del so there is exactly ONE place that knows a booked makeup's row must
+    // survive with its status reset (see the comment there, and
+    // docs/adr/0002-clearing-a-note-keeps-the-makeup-booking.md). Blanking the status
+    // first is what lets derivation speak: with a status set, its stickiness rule would
+    // simply hand the mark she is undoing straight back.
+    async clearAttendance({ dateStr, slot, studentId }) {
+      const session = await ensureSession(dateStr, slot);
+      const existing = await rowFor('attendance', session.id, studentId);
+      if (existing) {
+        existing.status = null;
+        existing.updatedAt = m.now();
+        await db.put('attendance', existing);
+      }
+      return deriveAttendance(session, studentId);
+    },
+
     // "I missed this whole session" is a bulk write, not a second field. A session-level
     // status plus per-student rows can contradict each other, and something then has to
     // arbitrate — a bug generator and an extra concept for a reader to hold. One source
@@ -909,6 +927,16 @@ SLP.store = (() => {
         for (const row of await db.getAllBy(store, 'sessionId', sessionId)) {
           if (row.studentId === studentId) await db.del(store, row.id);
         }
+      }
+      // The attendance row that just went may have been a booked makeup's, and a
+      // slotless session with an empty roster is then an orphan: planForDate keeps
+      // drawing it on Today, while the grid's delete control — gated on isMakeup —
+      // can no longer reach it. Cancel the appointment outright instead of stranding
+      // it. A slotted session stays: its slot still owns that day, so she can put
+      // someone back into it. See docs/adr/0002-clearing-a-note-keeps-the-makeup-booking.md.
+      if (!session.slotId && !session.roster.length) {
+        await this.deleteMakeup(sessionId);
+        return null;
       }
       return session;
     },
@@ -2410,11 +2438,12 @@ SLP.ui = (() => {
   async function toggleAbsentNow(entry, student, state) {
     const next = state === 'absent' ? 'present' : 'absent';
     if (next === 'present') {
-      // Undo: drop the explicit row and let attendance derive from data again.
-      const session = await SLP.store.ensureSession(SLP.ui.route.date, slotOf(entry));
-      const rows = await SLP.db.getAllBy('attendance', 'sessionId', session.id);
-      const row = rows.find(r => r.studentId === student.id);
-      if (row) await SLP.db.del('attendance', row.id);
+      // Undo: withdraw the explicit mark and let attendance derive from data again.
+      // The store owns the withdrawal because a booked makeup's row must outlive it —
+      // deleting it here took the booking with it. See
+      // docs/adr/0002-clearing-a-note-keeps-the-makeup-booking.md.
+      await SLP.store.clearAttendance({ dateStr: SLP.ui.route.date, slot: slotOf(entry),
+                                        studentId: student.id });
     } else {
       await SLP.store.setAttendance({ dateStr: SLP.ui.route.date, slot: slotOf(entry),
                                       studentId: student.id, status: 'absent' });

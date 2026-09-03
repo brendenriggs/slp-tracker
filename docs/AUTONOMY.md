@@ -35,17 +35,33 @@ Small, self-contained fixes that are complete and green on their own may go stra
 
 ## What "verified" means
 
-A green suite is blind to this app's three failure modes: **layout, scroll position, and
-async timing**. So verification is not just the suite.
+A green suite is blind to four of this app's failure modes: **layout, scroll position,
+async timing, and fixture size**. So verification is not just the suite.
 
-- Seed realistic data (`node tmp/gen-seed.js`), render, and **measure** with
-  `getBoundingClientRect()` — the house style for layout assertions.
-- **Screenshot and look at it.** Headless capture works:
-  `google-chrome --headless=new --disable-gpu --no-sandbox --window-size=1280,900
-  --screenshot=<out.png> <url>`. Do **not** pass `--virtual-time-budget` — it expires before
-  IndexedDB callbacks run and the capture comes out blank. `--dump-dom` fails the same way.
+- Seed realistic data, render, and **measure** with `getBoundingClientRect()` — the house
+  style for layout assertions. `tmp/gen-seed.js` is the generator; check what it emits against
+  the current vocabulary before trusting it, since a fixture drifts from the code it seeds and
+  nothing fails when it does.
+- **Seed at her real caseload — 49 students — not six.** A control that renders 175px from the
+  row it acts on looks fine in a six-student fixture and lands 1200px off-screen in her data.
+  Two features shipped past both a green suite and a screenshot this way. Fixture size is not
+  a detail of the test; it is the thing being tested.
+- **Screenshot and look at it, at the scroll position she would actually be at.** A capture at
+  scroll 0 cannot answer a question about something that opens beside a mid-list row.
+- **Drive Chrome over CDP and capture only after a readiness marker is set.** `--screenshot`
+  fires at the page's `load` event, which precedes IndexedDB seeding and the render, so a cold
+  capture comes out blank on its own — `--virtual-time-budget` and `--dump-dom` make it worse
+  but are not the cause. `tmp/cdp-shot-task9.js` and `tmp/screenshot-attendance.html` are the
+  working shape.
+- **Compare the same number across every view that shows it.** A CSS rule scoped to one view's
+  container silently styles nothing in another, and the class still reads as present in the
+  DOM — so both the suite and a single screenshot pass. Put the two shots side by side.
 - Make the visual call yourself rather than deferring it, and collect the shots into one
   contact sheet for review, with anything you were unsure about called out at the top.
+
+**Fix the pattern, not the instance.** A defect found in one control is a defect in every
+control built the same way. Generalise the rule into this file before moving on — twice the
+same placement bug was fixed where it was found, and the next control built repeated it.
 
 ## Which questions need which human
 
@@ -71,6 +87,9 @@ here.
   becoming a form builder.
 - **Never `alert`, `confirm` or `prompt`.** They freeze browser automation and hang test
   runs. Confirmation uses the armed-delete pattern.
+- **Controls anchor to the row they act on.** A popover or form that acts on one student's row
+  is inserted as a `<tr>` immediately after that row, never appended at section level. The
+  Today card's in-place expansion is the model.
 - **The template is not history.** Editing a slot never rewrites a past session.
 - **Never run anything on her machine.** All manual checks happen on Brenden's.
 - **She will never use git.** This repo is Brenden's history alone.
@@ -84,6 +103,11 @@ here.
   all means a syntax error or `ReferenceError` in the app file, not a hung harness.
 - **Running the suite wipes the app database.** Restore from `tmp/slp-test-data.json`.
   Settled; do not re-raise it.
+- **`throws()` catches any throw, including a `TypeError` from a function that does not exist
+  yet.** A test asserting only "it threw" proves nothing — it passes just as happily against a
+  typo. Assert the message names the thing it rejected; `tests/backup.test.js:152-168` is the
+  house convention. The same trap has a styling form: asserting a class is present passes
+  against a rule that styles nothing. Assert the computed style.
 - **The clock is stubbable.** `todayStr` is exported on the namespace and called per render,
   so a test can pin it: `w.SLP.ui.todayStr = () => '2026-10-31'`. Prefer this over rewriting
   test dates into the past, which quietly destroys future-exclusion coverage.

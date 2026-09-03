@@ -162,6 +162,51 @@ test('absence can be undone', async () => {
       .dataset.state, 'none', 'back to not-charted');
 });
 
+// A booked makeup shows on Today — that is what a slotless session is for — so the
+// Absent toggle is a second door onto the row ADR 0002 protects. The first door, an
+// emptied note, is pinned in tests/attendance-store.test.js:65-97; this pair pins the
+// toggle. Undoing the absence must undo the charting, not the appointment.
+// 2026-09-09 is a Wednesday: no slot falls on it, so the makeup is the only entry and
+// Ada has exactly one block on the page.
+const ENTRY_MAKEUP_DAY = '2026-09-09';
+
+test('undoing an absence on a booked makeup keeps the booking', async () => {
+  const w = await loadApp();
+  const { ada } = await seedEntryDay(w);
+  const { session } = await w.SLP.store.bookMakeup({
+    date: ENTRY_MAKEUP_DAY, startTime: '11:00', endTime: '11:30', studentId: ada.id });
+  await w.SLP.ui.go({ tab: 'today', date: ENTRY_MAKEUP_DAY });
+
+  const sel = '.student-block[data-student-id="' + ada.id + '"] .absent-toggle';
+  w.document.querySelector(sel).click();                    // he did not show
+  await w.SLP.ui.today.flush(); await w.SLP.ui.render();
+  w.document.querySelector(sel).click();                    // wrong child — undo it
+  await w.SLP.ui.today.flush(); await w.SLP.ui.render();
+
+  const rows = (await w.SLP.db.getAllBy('attendance', 'sessionId', session.id))
+    .filter(r => r.studentId === ada.id);
+  eq(rows.length, 1, 'the appointment she scheduled survives an undone absence');
+  eq(rows[0].status, null, 'back to booked-but-unmarked, not held and not absent');
+  eq(rows[0].isMakeup, true,
+     'and still flagged, or the credit never accrues, the debt silently returns, and ' +
+     'the grid can no longer cancel it');
+});
+
+test('undoing an absence on an ordinary session still withdraws the mark', async () => {
+  const w = await loadApp();
+  const { ada } = await seedEntryDay(w);
+  await w.SLP.ui.go({ tab: 'today', date: MONDAY2 });
+  const sel = '.student-block[data-student-id="' + ada.id + '"] .absent-toggle';
+  w.document.querySelector(sel).click();
+  await w.SLP.ui.today.flush(); await w.SLP.ui.render();
+  w.document.querySelector(sel).click();
+  await w.SLP.ui.today.flush(); await w.SLP.ui.render();
+
+  const rows = (await w.SLP.db.getAll('attendance')).filter(r => r.studentId === ada.id);
+  eq(rows.length, 0,
+     'the makeup carve-out is an exception, not a new general rule — this row still goes');
+});
+
 test('Alt+A toggles absence for the focused block', async () => {
   const w = await loadApp();
   const { ada } = await seedEntryDay(w);

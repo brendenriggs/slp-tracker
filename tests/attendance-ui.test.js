@@ -403,3 +403,46 @@ test('a regular session offers no delete', async () => {
   eq(pop.querySelector('#att-delete-makeup'), null,
      'deleting a scheduled session is the Schedule tab’s job, not this one’s');
 });
+
+test('the booking form renders adjacent to the row it belongs to, not at the top of the section', async () => {
+  const w = await loadApp();
+  const { ada, slot } = await attUiSeed(w);
+  await w.SLP.store.setAttendance({ dateStr: ATT_UI_MONDAY, slot,
+                                    studentId: ada.id, status: 'missed' });
+  const doc = await attUiOpen(w, '2026-10-01', '2026-10-31');
+  // On a real 49-student caseload the grid runs well past a screen's height and the
+  // scroll position survives the render — a form appended at the top of the section
+  // (or anywhere but next to her row) can open a thousand pixels above where she is
+  // looking, and she sees nothing happen. It belongs immediately after her row, in
+  // its own full-width table row, the same way the popover already does.
+  attUiRow(doc, ada).querySelector('.att-owed-open').click();
+  await w.SLP.ui.render();
+  const form = w.document.querySelector('#att-booking');
+  assert(form, 'the booking form opened');
+  const formRow = form.closest('tr');
+  assert(formRow, 'the booking form lives inside the table, next to her row, not above it');
+  eq(formRow.previousElementSibling, attUiRow(w.document, ada),
+     'the booking form row is the very next sibling of the row whose Owed button opened it');
+});
+
+test('opening the booking form closes an open popover, and opening a cell closes an open booking form', async () => {
+  const w = await loadApp();
+  const { ada, slot } = await attUiSeed(w);
+  await w.SLP.store.setAttendance({ dateStr: ATT_UI_MONDAY, slot,
+                                    studentId: ada.id, status: 'missed' });
+  const doc = await attUiOpen(w, '2026-10-01', '2026-10-31');
+
+  await attUiOpenCell(w, ada, ATT_UI_MONDAY);
+  assert(w.document.querySelector('#att-popover'), 'the popover opened first');
+  attUiRow(w.document, ada).querySelector('.att-owed-open').click();
+  await w.SLP.ui.render();
+  eq(w.document.querySelector('#att-popover'), null,
+     'the popover and the booking form act on the same row — opening the form closes it');
+  assert(w.document.querySelector('#att-booking'), 'and the form is the one now open');
+
+  attUiCells(w.document, ada, ATT_UI_MONDAY)[0].click();
+  await w.SLP.ui.render();
+  eq(w.document.querySelector('#att-booking'), null,
+     'and clicking her cell again closes the form the same way');
+  assert(w.document.querySelector('#att-popover'), 'in favour of the popover');
+});

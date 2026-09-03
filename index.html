@@ -2588,6 +2588,9 @@ SLP.ui = (() => {
       'aria-label': row.student.name + ', ' + date + ': ' + LABEL[cell.state] +
                     (cell.isMakeup ? ' (makeup)' : ''),
       'on:click': () => {
+        // The popover and the booking form are two ways of acting on the same row;
+        // opening one closes the other rather than stacking both under it.
+        ui.booking = null;
         ui.marking = {
           studentId: row.student.id, studentName: row.student.name, date,
           sessionId: cell.sessionId, slotId: cell.slotId, isMakeup: cell.isMakeup,
@@ -2620,7 +2623,7 @@ SLP.ui = (() => {
       h('span', { text: '▫ᴹ makeup booked, unmarked' }));
   }
 
-  function gridTable(grid) {
+  function gridTable(grid, slots) {
     // Two header rows. The day row carries day-of-month alone, which repeats across a
     // quarter ("1" three times); the band above it names the month each run belongs to.
     const monthRow = h('tr', { id: 'attendance-months' },
@@ -2639,10 +2642,15 @@ SLP.ui = (() => {
       h('th', { class: 'att-owed', scope: 'col', text: 'Owed' }));
 
     // On her real caseload (49 students) the grid runs well past a screen's height, so
-    // the popover cannot live at the end of the section — it would open a thousand
-    // pixels below the row she just clicked. It renders immediately after that row
-    // instead, in its own full-width row, still entirely driven by ui.marking: nothing
-    // is anchored to a DOM element or held across renders.
+    // neither the popover nor the booking form can live at the end of the section —
+    // either would open a thousand pixels below the row she just clicked, off screen,
+    // with the scroll position unchanged and nothing visibly happening. Both render
+    // immediately after the row they belong to instead, in their own full-width row,
+    // still entirely driven by ui.marking / ui.booking: nothing is anchored to a DOM
+    // element or held across renders. Opening one already clears the other (the Owed
+    // button and cellEl's click handler both do this), so at most one applies to any
+    // given row — but the check below still asks "which, if either" rather than
+    // assuming, so a row is never asked to show both at once.
     const colspan = String(1 + grid.dates.length + 2);
     const body = grid.rows.flatMap(row => {
       const tr = h('tr', { 'data-student-id': row.student.id },
@@ -2671,9 +2679,15 @@ SLP.ui = (() => {
                 },
               })
             : h('span', { text: '—' })));
-      if (!ui.marking || ui.marking.studentId !== row.student.id) return [tr];
-      return [tr, h('tr', { class: 'att-popover-row' },
-        h('td', { colspan }, popover()))];
+      if (ui.marking && ui.marking.studentId === row.student.id) {
+        return [tr, h('tr', { class: 'att-popover-row' },
+          h('td', { colspan }, popover()))];
+      }
+      if (ui.booking && ui.booking.student.id === row.student.id) {
+        return [tr, h('tr', { class: 'att-popover-row', id: 'att-booking-row' },
+          h('td', { colspan }, bookingForm(slots)))];
+      }
+      return [tr];
     });
 
     return h('div', { class: 'att-wrap' },
@@ -2692,7 +2706,11 @@ SLP.ui = (() => {
     const slot = slotId
       ? (await SLP.store.listSlots()).find(s => s.id === slotId)
       : (sessionId ? { id: null, sessionId } : null);
-    if (!slot) return;
+    // Not reachable today (a stale slotId/sessionId would mean the cell's own slot or
+    // session vanished between render and click), but a silent no-op here is the one
+    // failure this app exists to prevent: she picks a status, the popover closes, and
+    // nothing was written with nothing to tell her so. Toast rather than swallow it.
+    if (!slot) { SLP.ui.toast('That mark did not save — reload and try again.', 'warn'); return; }
     if (wholeSession) {
       await SLP.store.setSessionAttendance({ dateStr: date, slot, status });
     } else {
@@ -2862,10 +2880,11 @@ SLP.ui = (() => {
     // left in it drops off the list the same way it does on the Students tab.
     const filters = SLP.ui.studentFilters({
       idPrefix: 'attendance', state: ui, students: data.students,
-      // A filter that hides the student whose popover is open leaves ui.marking
-      // pointing at a row no longer on screen — harmless (no wrong write is
-      // reachable from it) but untidy, and it lingers until another cell is clicked.
-      onChange: () => { ui.marking = null; SLP.ui.render(); },
+      // A filter that hides the student whose popover or booking form is open leaves
+      // ui.marking/ui.booking pointing at a row no longer on screen — harmless (no
+      // wrong write is reachable from it) but untidy, and it lingers until another
+      // cell or Owed button is clicked.
+      onChange: () => { ui.marking = null; ui.booking = null; SLP.ui.render(); },
     });
     const shown = new Set(filters.shown.map(s => s.id));
 
@@ -2876,12 +2895,11 @@ SLP.ui = (() => {
       h('h2', { text: 'Attendance' }),
       h('div', { class: 'row-form' }, 'From', from, 'to', to),
       filters.el,
-      bookingForm(data.slots),
       invalidRange
         ? h('p', { class: 'empty', id: 'attendance-range-error',
                    text: 'The end date must be after the start.' })
         : grid.rows.length
-          ? gridTable(grid)
+          ? gridTable(grid, data.slots)
           : h('p', { class: 'empty', text: 'No students match.' }),
       legend()));
   };

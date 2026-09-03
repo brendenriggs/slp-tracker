@@ -12,12 +12,17 @@
 
 ## Global Constraints
 
-- **Work on a branch — `main` is now deployed.** As of 2026-09-02 the app is hosted at
-  https://brendenriggs.github.io/slp-tracker/ and every push to `main` reaches her within
-  about ten minutes. This plan lands ten commits, nine of which leave the Attendance tab
-  half-built. **Branch first** (`git checkout -b attendance-stage-1`), commit each task
-  there, and merge to `main` only once Task 10 is done and the suite is green. The
-  per-task commit commands below are deliberately `commit` with no `push`.
+- **`main` is a beta environment, not production — for now.** As of 2026-09-02 the app is
+  hosted at https://brendenriggs.github.io/slp-tracker/, but **Carol Ann has not been given
+  the URL.** She is still on her emailed `file://` copy. So pushing to `main` mid-plan is
+  safe today: nobody is watching. Work straight on `main` and push freely.
+
+  **What this constrains is promotion, not commits.** The moment she gets that URL, every
+  push to `main` reaches her within about ten minutes, and this plan lands ten commits of
+  which nine leave the Attendance tab half-built. **Do not promote mid-plan.** If promotion
+  becomes urgent before Task 10 is done, branch the unfinished work off `main` first
+  (`git checkout -b attendance-stage-1`) and leave `main` at the last green, coherent
+  state. The promotion procedure is in `docs/DELIVERY.md`.
 
 - **Everything lives in `index.html`.** One file, section-commented. New UI goes in a new `SECTION: ui.attendance` block placed between `ui.today` (ends at line 2125) and `ui.aggregation` (whose banner starts at line 2127). No new source files.
 - **`SLP.model` and `SLP.derive` are pure.** No IO, no DOM, no `await` in either. All IndexedDB access lives in `SLP.db` and `SLP.store`.

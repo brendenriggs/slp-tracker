@@ -1,8 +1,26 @@
 # Delivering the tracker
 
-The app lives at **https://brendenriggs.github.io/slp-tracker/**. She bookmarks it once.
+The app is hosted at **https://brendenriggs.github.io/slp-tracker/**.
 
-## Updating her copy
+## Status: beta. She does not have this URL.
+
+As of 2026-09-02 Carol Ann is still working from her emailed `file://` copy of
+`slp-tracker.html`. The hosted app is a **beta environment** — Brenden's to push to and
+break freely, because nobody else is looking at it.
+
+**Everything below the "Promoting to production" heading has not happened yet.** Until it
+does, `main` carries no obligation to be coherent, and a half-finished feature on it
+harms nobody.
+
+## Promoting to production
+
+Promotion is a single act: **giving her the URL and walking her through the migration in
+"The one-time move" below.** Do it only when `main` is green and coherent — she cannot see
+a version number climb and reason about whether a broken tab is expected.
+
+The draft note that hands her the URL is `tmp/note-for-her.md` (gitignored, unsent).
+
+## Updating her copy — after promotion
 
 `git push` to `main`. GitHub Pages rebuilds within a minute or two, and its CDN caches
 HTML for about ten minutes, so a refresh shortly after the push gets her the new version.

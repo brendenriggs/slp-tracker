@@ -5,16 +5,33 @@ into a spec, replace its entry with a link to that spec rather than deleting it.
 
 ---
 
-## Process Carol Ann's feature-request note
+## A schedule slot's time cannot be edited
 
-**Raised:** 2026-09-02 · **Status:** blocked — the note itself has not been captured yet
+**Raised:** 2026-09-02 by Carol Ann · **Status:** captured, not yet processed —
+no design, no scope, no estimate. Deliberately deferred.
 
-Brenden relayed that she sent a note with a feature request. **The note's contents are not
-recorded anywhere in this repo, and processing was deliberately deferred at the time it
-was raised.** Nothing has been designed, scoped, or estimated.
+Her note, verbatim:
 
-**Before this can move, the note has to land somewhere durable** — paste it into this
-entry, or drop it in `tmp/` and link it from here.
+> If you put the time in wrong for your schedule, I can't edit it,
+>
+> So I wrote my note and then realized it was the wrong time
+>
+> I can't go and fix that without deleting the session and then have to retype the notes
+
+**Confirmed in the code, 2026-09-02.** `index.html:1322–1336` renders each slot card with
+its time as plain text (`h('div', { class: 'slot-time', text: ... })`) and exactly one
+control: **Delete**. There is no edit path for `startTime`/`endTime`, on the slot or
+anywhere else. `slotForm` (`index.html:1304`) only ever creates.
+
+Two things worth noticing before anyone designs a fix, because they are not the same
+problem and she has run into both at once:
+
+1. **The slot has no editor.** That is the literal request.
+2. **Her charted work does not survive the workaround.** `deleteSlot` toasts *"Sessions
+   already charted are untouched"*, yet she reports retyping her notes. Either the toast
+   overpromises or the recovery path is not discoverable. **Find out which before
+   designing anything** — if it is the second, an edit button alone will not have fixed
+   what actually hurt her.
 
 Then process it the way the last two of her requests were processed, which worked:
 

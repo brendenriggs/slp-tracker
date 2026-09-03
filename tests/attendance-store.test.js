@@ -3,7 +3,6 @@
 // attendance-derive.test.js about the shared global scope.
 
 const ATT_MONDAY = '2026-10-05';    // a Monday
-const ATT_TUESDAY = '2026-10-06';
 
 async function attSeed(w) {
   const m = w.SLP.model, st = w.SLP.store;
@@ -117,6 +116,31 @@ test('attendanceRange excludes sessions outside the range', async () => {
   const data = await w.SLP.store.attendanceRange({ from: '2026-10-01', to: '2026-10-31' });
   eq(data.sessions.length, 1, 'only October');
   eq(data.attendance.length, 1, 'and no orphan rows from November’s session');
+});
+
+test('attendanceRange includes sessions dated exactly on the from and to boundaries', async () => {
+  const w = await loadApp();
+  const { ada, slot } = await attSeed(w);
+  await w.SLP.store.setAttendance({ dateStr: '2026-10-01', slot,
+                                    studentId: ada.id, status: 'present' });
+  await w.SLP.store.setAttendance({ dateStr: '2026-10-31', slot,
+                                    studentId: ada.id, status: 'present' });
+
+  const data = await w.SLP.store.attendanceRange({ from: '2026-10-01', to: '2026-10-31' });
+  eq(data.sessions.map(s => s.date).sort(), ['2026-10-01', '2026-10-31'],
+     'from and to are both inclusive, not just the dates strictly between them');
+});
+
+test('attendanceRange defaults today to null and echoes a supplied value unchanged', async () => {
+  const w = await loadApp();
+  await attSeed(w);
+
+  const withoutToday = await w.SLP.store.attendanceRange({ from: '2026-10-01', to: '2026-10-31' });
+  eq(withoutToday.today, null, 'omitted today defaults to null');
+
+  const withToday = await w.SLP.store.attendanceRange({
+    from: '2026-10-01', to: '2026-10-31', today: '2026-10-15' });
+  eq(withToday.today, '2026-10-15', 'a supplied today is echoed back unchanged');
 });
 
 test('attendanceRange leaves former students off the page', async () => {

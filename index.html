@@ -249,9 +249,13 @@
   .att-owed-debt { color: var(--warn); }
   .att-legend { font-size: 12px; color: var(--muted); margin: 10px 0 0;
                 display: flex; flex-wrap: wrap; gap: 12px; }
-  .att-popover { position: absolute; z-index: 20; background: var(--bg);
+  /* In-flow, not absolute: it lives in its own row right after the one she clicked
+     (gridTable), so it needs to take real space and push the rows below it down —
+     an out-of-flow box would collapse its row to nothing and land who knows where. */
+  .att-popover { display: inline-block; text-align: left; background: var(--bg);
                  border: 1px solid var(--line); border-radius: 8px; padding: 8px;
                  box-shadow: 0 4px 14px rgba(0,0,0,.12); min-width: 190px; }
+  .att-popover-row td { padding: 8px 5px; }
   .att-popover h3 { font-size: 11px; margin: 0 0 6px; text-transform: uppercase;
                     letter-spacing: .5px; color: var(--muted); font-weight: 600; }
   .att-popover .att-choices { display: flex; flex-direction: column; gap: 2px; }
@@ -2579,8 +2583,14 @@ SLP.ui = (() => {
       h('th', { class: 'att-pct', scope: 'col', text: '%' }),
       h('th', { class: 'att-owed', scope: 'col', text: 'Owed' }));
 
-    const body = grid.rows.map(row =>
-      h('tr', { 'data-student-id': row.student.id },
+    // On her real caseload (49 students) the grid runs well past a screen's height, so
+    // the popover cannot live at the end of the section — it would open a thousand
+    // pixels below the row she just clicked. It renders immediately after that row
+    // instead, in its own full-width row, still entirely driven by ui.marking: nothing
+    // is anchored to a DOM element or held across renders.
+    const colspan = String(1 + grid.dates.length + 2);
+    const body = grid.rows.flatMap(row => {
+      const tr = h('tr', { 'data-student-id': row.student.id },
         h('th', { class: 'att-name', scope: 'row', text: row.student.name }),
         grid.dates.map(d => {
           const cells = row.cells[d] || [];
@@ -2595,7 +2605,11 @@ SLP.ui = (() => {
         h('td', { class: 'att-owed' },
           row.owed.owed
             ? h('span', { class: 'att-owed-debt', text: '−' + row.owed.owed + ' min' })
-            : h('span', { text: '—' }))));
+            : h('span', { text: '—' })));
+      if (!ui.marking || ui.marking.studentId !== row.student.id) return [tr];
+      return [tr, h('tr', { class: 'att-popover-row' },
+        h('td', { colspan }, popover()))];
+    });
 
     return h('div', { class: 'att-wrap' },
       h('table', { class: 'att-grid', id: 'attendance-grid' },
@@ -2721,8 +2735,7 @@ SLP.ui = (() => {
         : grid.rows.length
           ? gridTable(grid)
           : h('p', { class: 'empty', text: 'No students match.' }),
-      legend(),
-      popover()));
+      legend()));
   };
 })();
 

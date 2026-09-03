@@ -234,6 +234,20 @@ test('clicking a cell offers the four outcomes rather than cycling', async () =>
      'four states means overshooting, and cycling hides the vocabulary');
 });
 
+test('the popover renders adjacent to the row being marked, not at the end of the section', async () => {
+  const w = await loadApp();
+  const { ada } = await attUiSeed(w);
+  await attUiOpen(w, '2026-10-05', '2026-10-09');
+  const pop = await attUiOpenCell(w, ada, ATT_UI_MONDAY);
+  // On a real 49-student caseload the grid runs well past a screen's height — a popover
+  // appended after the whole grid can land a thousand pixels below the row she clicked.
+  // It belongs immediately after her row, in its own full-width table row.
+  const popRow = pop.closest('tr');
+  assert(popRow, 'the popover lives inside the table, next to her row, not after it');
+  eq(popRow.previousElementSibling, attUiRow(w.document, ada),
+     'the popover row is the very next sibling of the row she clicked');
+});
+
 test('picking an outcome writes it and closes the popover', async () => {
   const w = await loadApp();
   const { ada } = await attUiSeed(w);

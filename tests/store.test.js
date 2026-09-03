@@ -298,3 +298,53 @@ test('correcting a student who is gone changes nothing', async () => {
      'a missing student reports itself rather than creating one');
   eq((await w.SLP.store.listStudents({})).length, 0, 'and nothing was written');
 });
+
+test('a session already charted survives its slot being deleted', async () => {
+  const w = await loadApp();
+  const { ada, slot } = await seedCaseload(w);
+  await w.SLP.store.saveNote({ dateStr: MONDAY, slot, studentId: ada.id,
+                               text: 'worked on /s/ blends' });
+
+  await w.SLP.store.deleteSlot(slot.id);
+
+  // The toast says "Sessions already charted are untouched." Until now planForDate only
+  // rescued sessions that never had a slot (`!s.slotId`), so one whose slot was deleted
+  // kept a dangling slotId, belonged to nothing, and vanished from Today — while its note
+  // survived read-only on the student page, which is why she ends up retyping it.
+  const plan = await w.SLP.store.planForDate(MONDAY);
+  eq(plan.length, 1, 'the charted session is still on the day it was charted');
+  eq(plan[0].students.map(s => s.name).includes('Ada'), true, 'with its roster');
+  eq(plan[0].notes[ada.id].text, 'worked on /s/ blends', 'and the note she already typed');
+});
+
+test('deleting a slot leaves its charted sessions addressable, not dangling', async () => {
+  const w = await loadApp();
+  const { ada, slot } = await seedCaseload(w);
+  await w.SLP.store.saveNote({ dateStr: MONDAY, slot, studentId: ada.id, text: 'first' });
+
+  await w.SLP.store.deleteSlot(slot.id);
+
+  const sessions = await w.SLP.db.getAll('sessions');
+  eq(sessions.length, 1, 'the session itself is untouched — deleteSlot does not cascade');
+  eq(sessions[0].slotId, null,
+     'but it points at no template now, which is what makes Today fold it back in');
+  eq(sessions[0].startTime, '09:00', 'its own time snapshot is what it renders from');
+});
+
+test('deleting a slot does not disturb a session on another day', async () => {
+  const w = await loadApp();
+  const { ada, slot } = await seedCaseload(w);
+  const other = w.SLP.model.slot({ dayOfWeek: 2, startTime: '10:00', endTime: '10:30',
+                                   studentIds: [ada.id] });
+  await w.SLP.store.saveSlot(other);
+  await w.SLP.store.saveNote({ dateStr: MONDAY, slot, studentId: ada.id, text: 'monday' });
+  await w.SLP.store.saveNote({ dateStr: '2026-09-08', slot: other, studentId: ada.id,
+                               text: 'tuesday' });
+
+  await w.SLP.store.deleteSlot(slot.id);
+
+  const tuesday = (await w.SLP.db.getAll('sessions')).find(s => s.date === '2026-09-08');
+  eq(tuesday.slotId, other.id, "the surviving slot's session keeps its template");
+  const plan = await w.SLP.store.planForDate('2026-09-08');
+  eq(plan.length, 1, 'and Tuesday still renders from the schedule, not as an orphan');
+});

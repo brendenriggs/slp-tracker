@@ -599,7 +599,24 @@ SLP.store = (() => {
         (a, b) => a.dayOfWeek - b.dayOfWeek || a.startTime.localeCompare(b.startTime));
     },
     saveSlot: sl => db.put('slots', sl),
-    deleteSlot: id => db.del('slots', id),
+
+    // Deleting a slot removes the template, never the history charted against it — that
+    // is what the toast promises. But a session left pointing at a slot that no longer
+    // exists belongs to nothing: planForDate folds in ad-hoc sessions with `!s.slotId`,
+    // so a dangling slotId made the session vanish from the day it was charted on while
+    // its note survived, read-only, on the student page. That is the trap behind her
+    // "delete the slot and recreate it" workaround, and why she ends up retyping notes.
+    //
+    // A session whose slot is gone genuinely has no template any more, so say so: the
+    // slotId goes to null and it renders from its own time, roster and location
+    // snapshot, exactly as a one-off session does.
+    async deleteSlot(id) {
+      for (const session of await db.getAllBy('sessions', 'slotId', id)) {
+        session.slotId = null;
+        await db.put('sessions', session);
+      }
+      await db.del('slots', id);
+    },
 
     ensureSession,
 

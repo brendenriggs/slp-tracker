@@ -22,10 +22,19 @@ something the clinician scheduled, not something the app inferred.
 The rule was written once, for one door, and the next thing built walked in through
 another and destroyed the booking again — Today's Absent toggle, clicked a second time to
 undo, deleted the row with a raw `db.del`. So the doors are named here rather than
-rediscovered. **Nothing outside `SLP.store` writes to the `attendance` store**; inside it:
+rediscovered. **Nothing outside `SLP.store` writes to the `attendance` store one row at a
+time**, with one exception: `backup.applyBackup` clears every store and `bulkPut`s the rows
+from her file wholesale. That path restores rows as they were written, `isMakeup` included,
+and never reconstructs one — it is outside this rule rather than an exception to it.
+
+Inside the store:
 
 - `deriveAttendance` — the rule itself. Nothing entered any more, so the derived mark is
   withdrawn, except that an `isMakeup` row survives with `status: null`.
+- `bookMakeup` — where the row is born, and the only writer of a `slotId: null` session.
+  It is the reason every other door has to care.
+- `addStudentToSession` — adds a student to a session that already exists, creating their
+  row. A makeup's roster is one child, so this is how a second one would join.
 - `clearAttendance` — undoing an explicit mark. It blanks the status and hands the row to
   `deriveAttendance` rather than deleting it, so there is one implementation of the rule.
 - `setAttendance` / `setSessionAttendance` — they mutate the existing row's `status`, never

@@ -693,6 +693,23 @@ SLP.store = (() => {
       return entries.sort((a, b) => a.slot.startTime.localeCompare(b.slot.startTime));
     },
 
+    // --- the grid ---
+    // All the IO in one place, and none of the meaning. A month is roughly 30 students
+    // × 22 days and a quarter closer to 30 × 60; querying per session, per store the way
+    // planForDate does would be hundreds of round-trips at that size. Five bulk reads
+    // instead, whatever the range. Everything computed lives in derive.attendanceGrid.
+    async attendanceRange({ from, to, today = null }) {
+      const students = (await db.getAll('students')).filter(s => s.active).sort(byName);
+      const slots = await this.listSlots();
+      const sessions = (await db.getAll('sessions'))
+        .filter(s => s.date >= from && s.date <= to);
+      const ids = new Set(sessions.map(s => s.id));
+      // Filtered here rather than queried per session: one read of a store she has
+      // a few thousand rows in beats one read per session she has hundreds of.
+      const attendance = (await db.getAll('attendance')).filter(a => ids.has(a.sessionId));
+      return { from, to, today, students, slots, sessions, attendance };
+    },
+
     // --- write paths (each materializes, then re-derives attendance) ---
     async recordValue({ dateStr, slot, studentId, objectiveId, fieldId, raw }) {
       const session = await ensureSession(dateStr, slot);

@@ -319,3 +319,22 @@ test('sessions outside the range are ignored even if handed in', async () => {
     students: [ada], sessions: [stray] }));
   eq(g.rows[0].cells, {}, 'the range is the range');
 });
+
+test('a student pulled from a materialized session gets no cell, not an accusing unmarked one', async () => {
+  const w = await loadApp();
+  const m = w.SLP.model;
+  const ada = m.student({ name: 'Ada' });
+  const bo = m.student({ name: 'Bo' });
+  // A group slot with both students, but the session that actually happened that day
+  // only rostered Ada — Bo was pulled (absent, moved, whatever) before it materialized.
+  const slot = m.slot({ dayOfWeek: 1, startTime: '09:00', endTime: '09:30',
+                        studentIds: [ada.id, bo.id] });
+  const session = m.session({ date: '2026-10-05', slotId: slot.id, startTime: '09:00',
+                              endTime: '09:30', roster: [ada.id] });
+  const g = w.SLP.derive.attendanceGrid(attGridData(w, {
+    students: [ada, bo], slots: [slot], sessions: [session] }));
+  eq(g.rows[0].cells['2026-10-05'].length, 1, 'Ada was in the session, so she gets her box');
+  eq(g.rows[1].cells['2026-10-05'], undefined,
+     'Bo was never in that session’s roster — the slot fallback must not stand in for ' +
+     'it and mark her unmarked for a session she was not scheduled into');
+});

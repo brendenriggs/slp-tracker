@@ -90,3 +90,63 @@ test('clearing the note on an ordinary session still withdraws the derived mark'
   eq(rows.length, 0,
      'the makeup carve-out is an exception, not a new general rule — this row still goes');
 });
+
+test('attendanceRange returns exactly what the grid needs', async () => {
+  const w = await loadApp();
+  const { ada, slot } = await attSeed(w);
+  await w.SLP.store.setAttendance({ dateStr: ATT_MONDAY, slot,
+                                    studentId: ada.id, status: 'absent' });
+
+  const data = await w.SLP.store.attendanceRange({ from: '2026-10-01', to: '2026-10-31',
+                                                   today: '2026-10-31' });
+  eq(data.students.map(s => s.name), ['Ada', 'Bo'], 'the caseload, by name');
+  eq(data.slots.length, 1, 'the weekly template');
+  eq(data.sessions.length, 1, 'the one session materialized by that write');
+  eq(data.attendance.length, 1, 'and its attendance row');
+  eq(data.today, '2026-10-31', 'the caller’s notion of today is echoed back');
+});
+
+test('attendanceRange excludes sessions outside the range', async () => {
+  const w = await loadApp();
+  const { ada, slot } = await attSeed(w);
+  await w.SLP.store.setAttendance({ dateStr: ATT_MONDAY, slot,
+                                    studentId: ada.id, status: 'absent' });
+  await w.SLP.store.setAttendance({ dateStr: '2026-11-02', slot,
+                                    studentId: ada.id, status: 'absent' });
+
+  const data = await w.SLP.store.attendanceRange({ from: '2026-10-01', to: '2026-10-31' });
+  eq(data.sessions.length, 1, 'only October');
+  eq(data.attendance.length, 1, 'and no orphan rows from November’s session');
+});
+
+test('attendanceRange leaves former students off the page', async () => {
+  const w = await loadApp();
+  const { bo } = await attSeed(w);
+  await w.SLP.store.setStudentActive(bo.id, false);
+  const data = await w.SLP.store.attendanceRange({ from: '2026-10-01', to: '2026-10-31' });
+  eq(data.students.map(s => s.name), ['Ada'], 'the grid is her current caseload');
+});
+
+test('attendanceRange does not fan out one query per session', async () => {
+  const w = await loadApp();
+  const { ada, slot } = await attSeed(w);
+  // Thirty sessions — a month of a real caseload. The old shape would be hundreds
+  // of IndexedDB round-trips; this must stay flat.
+  for (let d = 1; d <= 30; d++) {
+    const date = '2026-10-' + String(d).padStart(2, '0');
+    await w.SLP.store.setAttendance({ dateStr: date, slot, studentId: ada.id,
+                                      status: 'present' });
+  }
+
+  let calls = 0;
+  const realGetAll = w.SLP.db.getAll, realGetAllBy = w.SLP.db.getAllBy;
+  w.SLP.db.getAll = function (...a) { calls++; return realGetAll.apply(this, a); };
+  w.SLP.db.getAllBy = function (...a) { calls++; return realGetAllBy.apply(this, a); };
+  try {
+    await w.SLP.store.attendanceRange({ from: '2026-10-01', to: '2026-10-31' });
+  } finally {
+    w.SLP.db.getAll = realGetAll; w.SLP.db.getAllBy = realGetAllBy;
+  }
+  assert(calls <= 6, 'expected a handful of bulk reads, got ' + calls +
+                     ' — the per-session fan-out is back');
+});

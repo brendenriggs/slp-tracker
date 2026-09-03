@@ -61,13 +61,12 @@ data-split.
 ## Her new request — captured, deliberately not processed
 
 **A schedule slot's time cannot be edited.** Her note is quoted verbatim in
-`docs/BACKLOG.md`; read it there, and read it before forming a view — Brenden asked twice
-that it be recorded and *not* worked on, and the entry is deliberately free of anyone
-else's analysis so the next session starts from her words.
+`docs/BACKLOG.md`. Read it there, and read it before forming a view — the entry is
+deliberately free of anyone else's analysis so the next session starts from her words.
 
-This session overstepped that once: it went and confirmed the report against the code and
-wrote a diagnosis into the backlog. That was removed in `38fe57b`. If you
-find yourself reasoning about the fix before Brenden has asked her anything, stop.
+**Do not investigate it, and do not reason about the fix, until Brenden says to.** He
+asked for it recorded, not worked. Capture means capture: her words, unexamined. If you
+catch yourself opening the schedule code to see how bad it is, that is the thing to stop.
 
 ## The attendance plan was stale; it is now accurate
 

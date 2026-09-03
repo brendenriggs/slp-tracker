@@ -214,6 +214,35 @@ test('an end date before the start says so instead of emptying the caseload', as
   eq(doc.querySelector('#attendance-grid'), null, 'and no grid is drawn from a range that has no days');
 });
 
+test('an inverted range is said once, inline — not toasted on every render', async () => {
+  const w = await loadApp();
+  await attUiSeed(w);
+  const doc = await attUiOpen(w, '2026-10-31', '2026-10-01');
+  assert(doc.querySelector('#attendance-range-error'), 'the inline message carries it');
+  eq(doc.querySelector('.toast'), null,
+     'she sets the two ends one at a time, so end-before-start is a normal state on the ' +
+     'way through — a toast on every render nags her for typing');
+});
+
+test('a status the app no longer knows reads as itself, not "undefined"', async () => {
+  const w = await loadApp();
+  const { ada, slot } = await attUiSeed(w);
+  const session = await w.SLP.store.ensureSession(ATT_UI_MONDAY, slot);
+  // A row from an older vocabulary, restored from one of her own backups: model.attendance
+  // and setAttendance both refuse it, but a restore is a bulkPut and the grid still has to
+  // draw whatever is in the database.
+  await w.SLP.db.put('attendance', {
+    id: 'at-legacy', sessionId: session.id, studentId: ada.id, status: 'excused',
+    participation: 'scheduled', isMakeup: false, updatedAt: '2026-10-05T09:30:00.000Z' });
+
+  const doc = await attUiOpen(w, '2026-10-05', '2026-10-05');
+  const label = attUiCells(doc, ada, ATT_UI_MONDAY)[0].getAttribute('aria-label');
+  eq(/undefined/.test(label), false,
+     'a screen reader saying "Ada, 2026-10-05: undefined" tells her nothing — got ' + label);
+  assert(/excused/.test(label),
+     'the stored word is the only honest thing left to say — got ' + label);
+});
+
 function attUiPopover(doc) { return doc.querySelector('#att-popover'); }
 
 async function attUiOpenCell(w, student, date) {

@@ -2634,7 +2634,10 @@ SLP.ui = (() => {
       'data-student-id': row.student.id,
       'data-session-id': cell.sessionId,
       'data-slot-id': cell.slotId,
-      'aria-label': row.student.name + ', ' + date + ': ' + LABEL[cell.state] +
+      // Same fallback GLYPH has, and for the same reason: a status from an older
+      // vocabulary can still be sitting in a backup she restores. "Ada, 2026-10-05:
+      // undefined" is what a screen reader read out without it.
+      'aria-label': row.student.name + ', ' + date + ': ' + (LABEL[cell.state] || cell.state) +
                     (cell.isMakeup ? ' (makeup)' : ''),
       'on:click': () => {
         // The popover and the booking form are two ways of acting on the same row;
@@ -2771,7 +2774,7 @@ SLP.ui = (() => {
     return h('button', {
       class: (wholeSession ? 'att-choice-session' : 'att-choice') + ' plain',
       type: 'button', 'data-status': status,
-      text: (wholeSession ? 'Whole session: ' : '') + LABEL[status],
+      text: (wholeSession ? 'Whole session: ' : '') + (LABEL[status] || status),
       'on:click': async () => {
         const target = ui.marking;
         ui.marking = null;
@@ -2919,8 +2922,9 @@ SLP.ui = (() => {
     // the way from one range to another — the picker stores what she typed and says so,
     // rather than refusing the keystroke and stranding her half-way. eachDate yields
     // nothing for an inverted range, so the grid below is empty rather than wrong.
+    // Said once, inline, where the grid would have been: a toast as well fired on every
+    // render, so passing through a half-set range nagged her for typing.
     const invalidRange = !ui.range.from || !ui.range.to || ui.range.from > ui.range.to;
-    if (invalidRange) SLP.ui.toast('The end date must be after the start.', 'warn');
 
     const data = await SLP.store.attendanceRange({
       from: ui.range.from, to: ui.range.to, today: SLP.ui.todayStr() });

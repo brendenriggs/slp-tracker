@@ -17,10 +17,18 @@ here.
 
 **Why it matters:** it is the definition of the headline number on her progress notes.
 
-**Assumed meanwhile:** minutes, per the spec's reasoning. **This is currently untestable** —
-every fixture uses 30-minute slots, so both definitions produce identical numbers and the
-suite cannot tell them apart. If she says sessions, the attendance percentage work needs
-revisiting.
+**Assumed meanwhile:** minutes, per the spec's reasoning.
+
+Earlier notes said this was untestable, on the reasoning that every fixture uses 30-minute
+slots so both definitions produce identical numbers. That is no longer true, and was never
+true of the test that matters: `tests/attendance-derive.test.js`, *minutes, not session
+count, decide the percentage*, seeds one 30-minute session held and one 60-minute session
+missed — 50% by session count, 33% by minutes — and asserts 33.
+
+So the assumption is pinned rather than floating. **If she says sessions, that one test is
+where the answer lands**, along with the `heldMinutes`/`offeredMinutes` arithmetic in
+`SLP.derive.attendancePct`. The question is still hers to answer; what changed is that
+answering it is now a small, located edit instead of an audit.
 
 ---
 

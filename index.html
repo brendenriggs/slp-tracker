@@ -232,8 +232,11 @@
                         min-width: 96px; }
   .att-grid thead .att-name, .att-grid thead .att-pct, .att-grid thead .att-owed { z-index: 3; }
   /* A percentage computed over an incomplete quarter is provisional (spec:174-175).
-     The uncharted count says so in words; this says so at a glance. */
-  .att-grid .att-pct-provisional { font-style: italic; color: var(--muted); }
+     The uncharted count says so in words; this says so at a glance. Not scoped to
+     .att-grid: the student detail page's #student-attendance-pct carries this class
+     too, and needs the same look for the same reason — she reads it at a glance onto
+     the note she is writing right there. */
+  .att-pct-provisional { font-style: italic; color: var(--muted); }
   /* The month band above the day numbers. Ruled off so the runs read as groups. */
   .att-grid thead .att-month { border-bottom: 1px solid var(--line);
                                border-left: 1px solid var(--line);

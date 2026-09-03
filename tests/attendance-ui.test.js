@@ -508,3 +508,49 @@ test('the version records that Attendance shipped', async () => {
   const w = await loadApp();
   eq(w.SLP.version, '1.7.0', 'a new tab is a minor bump');
 });
+
+// A classList check alone cannot fail on the real defect here — .att-pct-provisional was
+// always applied by renderAttendance, but the only CSS rule for it was scoped to
+// `.att-grid .att-pct-provisional`, and #student-attendance is a section.panel on the
+// Students tab, never inside .att-grid. The class landed and styled nothing. Assert the
+// computed style itself, not just the class's presence, or this regresses silently again.
+test('the student page percentage looks unfinished when charting is incomplete, not just tagged', async () => {
+  const w = await loadApp();
+  const { ada, slot } = await attUiSeed(w);
+  await w.SLP.store.setAttendance({ dateStr: ATT_UI_MONDAY, slot,
+                                    studentId: ada.id, status: 'present' });
+  const doc = await attUiOpenStudent(w, ada);
+  const from = doc.querySelector('#student-attendance-from');
+  from.value = '2026-10-01'; from.dispatchEvent(new w.Event('change'));
+  await w.SLP.ui.render();
+  const to = w.document.querySelector('#student-attendance-to');
+  to.value = '2026-10-19'; to.dispatchEvent(new w.Event('change'));
+  await w.SLP.ui.render();
+
+  const pctEl = w.document.querySelector('#student-attendance-pct');
+  assert(pctEl.textContent.includes('uncharted'), 'the count is there — got ' + pctEl.textContent);
+  const style = w.getComputedStyle(pctEl);
+  eq(style.fontStyle, 'italic',
+     'the number itself must look unfinished here too — she reads it at a glance onto ' +
+     'this exact note, on this exact page — got ' + style.fontStyle);
+});
+
+test('a fully charted student-page percentage is not styled provisional', async () => {
+  const w = await loadApp();
+  const { ada, slot } = await attUiSeed(w);
+  await w.SLP.store.setAttendance({ dateStr: ATT_UI_MONDAY, slot,
+                                    studentId: ada.id, status: 'present' });
+  const doc = await attUiOpenStudent(w, ada);
+  const from = doc.querySelector('#student-attendance-from');
+  from.value = '2026-10-05'; from.dispatchEvent(new w.Event('change'));
+  await w.SLP.ui.render();
+  const to = w.document.querySelector('#student-attendance-to');
+  to.value = '2026-10-05'; to.dispatchEvent(new w.Event('change'));
+  await w.SLP.ui.render();
+
+  const pctEl = w.document.querySelector('#student-attendance-pct');
+  assert(!pctEl.textContent.includes('uncharted'), 'fully charted — got ' + pctEl.textContent);
+  const style = w.getComputedStyle(pctEl);
+  assert(style.fontStyle !== 'italic',
+     'flagging a complete number would make the flag mean nothing — got ' + style.fontStyle);
+});

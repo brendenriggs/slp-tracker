@@ -6,16 +6,23 @@
 
 **Architecture:** One bulk read (`store.attendanceRange`) does all the IndexedDB work; one pure function (`derive.attendanceGrid`) turns that data into rows, cells, percentages and balances. The view renders what `derive` hands it and writes back through the existing `store.setAttendance`. `attendance.status` widens from an effective `present | absent` to a four-value vocabulary, plus `null` for a makeup that is booked but not yet marked.
 
-**Tech Stack:** Vanilla ES2020 in one file — `slp-tracker.html`. IndexedDB via `SLP.db`. No framework, no build step, no dependencies. Tests are classic `<script>` files driven by headless Chrome through `tests/run-tests.sh`.
+**Tech Stack:** Vanilla ES2020 in one file — `index.html`. IndexedDB via `SLP.db`. No framework, no build step, no dependencies. Tests are classic `<script>` files driven by headless Chrome through `tests/run-tests.sh`.
 
 **Spec:** `docs/superpowers/specs/2026-08-25-attendance-and-makeup-debt-design.md`
 
 ## Global Constraints
 
-- **Everything lives in `slp-tracker.html`.** One file, section-commented. New UI goes in a new `SECTION: ui.attendance` block placed between `ui.today` (ends ~line 2118) and `ui.aggregation` (starts ~line 2119). No new source files.
+- **Work on a branch — `main` is now deployed.** As of 2026-09-02 the app is hosted at
+  https://brendenriggs.github.io/slp-tracker/ and every push to `main` reaches her within
+  about ten minutes. This plan lands ten commits, nine of which leave the Attendance tab
+  half-built. **Branch first** (`git checkout -b attendance-stage-1`), commit each task
+  there, and merge to `main` only once Task 10 is done and the suite is green. The
+  per-task commit commands below are deliberately `commit` with no `push`.
+
+- **Everything lives in `index.html`.** One file, section-commented. New UI goes in a new `SECTION: ui.attendance` block placed between `ui.today` (ends at line 2125) and `ui.aggregation` (whose banner starts at line 2127). No new source files.
 - **`SLP.model` and `SLP.derive` are pure.** No IO, no DOM, no `await` in either. All IndexedDB access lives in `SLP.db` and `SLP.store`.
 - **Never `innerHTML` with her data.** Build DOM with `SLP.ui.h(tag, attrs, ...children)` and the `text:` attribute. `html:` is only for app-authored markup.
-- **Never call `confirm()`, `alert()` or `prompt()`.** The app has zero of them. Confirmation uses the existing armed-delete pattern (`ui.armedDelete` — see `slp-tracker.html:1448`, `1530`): first click arms and re-renders showing a confirm/cancel pair, second click acts.
+- **Never call `confirm()`, `alert()` or `prompt()`.** The app has zero of them. Confirmation uses the existing armed-delete pattern (`ui.armedDelete` — see `index.html:1456`, `1538`): first click arms and re-renders showing a confirm/cancel pair, second click acts.
 - **Glyph and colour, never colour alone.** Every cell state carries a distinct character. Colour is decoration.
 - **Test files share one global scope.** `tests/index.html` loads each `*.test.js` as a classic `<script>`, so a top-level `function chart(...)` in one file silently overwrites another's. **Prefix every new top-level helper with `att`.**
 - **Prove each new test can fail before keeping it.** Run the test against unmodified code and confirm it goes red for the stated reason. A guard that guards nothing is worse than none.
@@ -28,20 +35,20 @@
 
 ## File Structure
 
-**`slp-tracker.html`** — the only source file touched:
+**`index.html`** — the only source file touched:
 
 | Region | Lines (pre-change) | What changes |
 |---|---|---|
 | CSS | 7–201 | Grid, cell, popover and booking-form styles |
-| `SLP.model` | 333–460 | `ATTENDANCE_STATUSES`; `attendance()` validates status |
-| `SLP.store` | 466–739 | `deriveAttendance` null-status fix; `attendanceRange`, `setSessionAttendance`, `bookMakeup`, `deleteMakeup`; `setAttendance` validates |
-| `SLP.derive` | 745–852 | `minutesOf`, `makeupBalance`, `attendancePct`, `attendanceGrid`, `monthRange`, `makeupDuration`; `studentState` null-status fix |
-| `SLP.ui` shell | 1103–1107 | `TABS` gains `['attendance', 'Attendance']` |
-| `ui.students` | 1652–1655 | Detail page gains an attendance summary via a new hook |
-| **`ui.attendance`** | new, ~2119 | The whole view: range picker, grid, marking popover, makeup booking |
-| `ui.aggregation` | 2253 | History row tolerates a null status |
-| boot | 2605 | — |
-| `SLP` version | 210 | `1.5.0` → `1.6.0` (last task) |
+| `SLP.model` | 337–464 | `ATTENDANCE_STATUSES`; `attendance()` validates status |
+| `SLP.store` | 470–743 | `deriveAttendance` null-status fix; `attendanceRange`, `setSessionAttendance`, `bookMakeup`, `deleteMakeup`; `setAttendance` validates |
+| `SLP.derive` | 749–856 | `minutesOf`, `makeupBalance`, `attendancePct`, `attendanceGrid`, `monthRange`, `makeupDuration`; `studentState` null-status fix |
+| `SLP.ui` shell | 1107–1111 | `TABS` gains `['attendance', 'Attendance']` |
+| `ui.students` | 1660–1663 | Detail page gains an attendance summary via a new hook |
+| **`ui.attendance`** | new, ~2126 | The whole view: range picker, grid, marking popover, makeup booking |
+| `ui.aggregation` | 2261 | History row tolerates a null status |
+| boot | 2611 | — |
+| `SLP` version | 214 | `1.6.0` → `1.7.0` (last task) |
 
 **New test files:**
 
@@ -65,7 +72,7 @@ The spec says a booked makeup writes an attendance row with `isMakeup: true`, an
 This makes "unmarked" a first-class value the grid already needed, at the cost of three one-line tolerance fixes (`deriveAttendance`, `studentState`, the history row) — all in Task 1, all before anything can write a null.
 
 **2. Session-level bulk marking does not overwrite an explicit non-`present` mark.**
-Straight from the spec's testing section: *"that it does not overwrite a mark she made by hand on one student."* This is the same stickiness rule `deriveAttendance` already applies at `slp-tracker.html:501`, extended to the bulk path. If Ada is marked `absent` and the whole session is then marked `missed`, Ada stays `absent` — which is also the arithmetically right answer, since a child who was not there generates no debt. The per-cell popover is the escape hatch when she genuinely wants to change one.
+Straight from the spec's testing section: *"that it does not overwrite a mark she made by hand on one student."* This is the same stickiness rule `deriveAttendance` already applies at `index.html:505`, extended to the bulk path. If Ada is marked `absent` and the whole session is then marked `missed`, Ada stays `absent` — which is also the arithmetically right answer, since a child who was not there generates no debt. The per-cell popover is the escape hatch when she genuinely wants to change one.
 
 ---
 
@@ -74,7 +81,7 @@ Straight from the spec's testing section: *"that it does not overwrite a mark sh
 The foundation every later task computes on. Nothing writes a `null` status yet — this task only makes the app tolerate one, so the booking task in Task 9 cannot break Today.
 
 **Files:**
-- Modify: `slp-tracker.html:210` (nothing yet — noted for Task 10), `333–460` (model), `499–521` (`deriveAttendance`), `661–672` (`setAttendance`), `745–852` (derive), `2253` (history row)
+- Modify: `index.html:214` (nothing yet — noted for Task 10), `337–464` (model), `503–525` (`deriveAttendance`), `665–676` (`setAttendance`), `749–856` (derive), `2261` (history row)
 - Modify: `tests/index.html:87` (register three new test files)
 - Test: `tests/attendance-derive.test.js` (create), `tests/attendance-store.test.js` (create)
 
@@ -233,7 +240,7 @@ Expected: the new tests fail — `ATTENDANCE_STATUSES` is undefined, `minutesOf`
 
 - [ ] **Step 4: Add the vocabulary to the model**
 
-In `slp-tracker.html`, inside the `SLP.model` IIFE, after the `now` helper (line 338):
+In `index.html`, inside the `SLP.model` IIFE, after the `now` helper (line 342):
 
 ```js
   // One field carries the outcome, so the vocabulary lives in one place.
@@ -244,7 +251,7 @@ In `slp-tracker.html`, inside the `SLP.model` IIFE, after the `now` helper (line
   const ATTENDANCE_STATUSES = Object.freeze(['present', 'absent', 'missed', 'cancelled']);
 ```
 
-Add `ATTENDANCE_STATUSES` to the returned object beside `GRADES` (line 431), and replace the `attendance` factory (lines 449–451) with:
+Add `ATTENDANCE_STATUSES` to the returned object beside `GRADES` (line 435), and replace the `attendance` factory (lines 453–455) with:
 
 ```js
     attendance: ({ sessionId, studentId, status, participation = 'scheduled', isMakeup = false }) => {
@@ -258,7 +265,7 @@ Add `ATTENDANCE_STATUSES` to the returned object beside `GRADES` (line 431), and
 
 - [ ] **Step 5: Teach the three readers about a null status**
 
-`deriveAttendance` — `slp-tracker.html:501`. Replace:
+`deriveAttendance` — `index.html:505`. Replace:
 
 ```js
     if (existing && existing.status !== 'present') return existing;   // hers, leave it
@@ -272,7 +279,7 @@ with:
     if (existing && existing.status && existing.status !== 'present') return existing;
 ```
 
-`derive.studentState` — `slp-tracker.html:756–761`. Replace the body with:
+`derive.studentState` — `index.html:760–765`. Replace the body with:
 
 ```js
   function studentState(entry, studentId) {
@@ -285,7 +292,7 @@ with:
   }
 ```
 
-The history row — `slp-tracker.html:2252–2254`. Replace:
+The history row — `index.html:2260–2262`. Replace:
 
 ```js
           h('span', { class: 'state-chip',
@@ -303,7 +310,7 @@ with:
 
 - [ ] **Step 6: Guard the write path**
 
-In `store.setAttendance` (`slp-tracker.html:661`), insert as the first statement of the function body:
+In `store.setAttendance` (`index.html:665`), insert as the first statement of the function body:
 
 ```js
       if (status !== null && !m.ATTENDANCE_STATUSES.includes(status)) {
@@ -313,7 +320,7 @@ In `store.setAttendance` (`slp-tracker.html:661`), insert as the first statement
 
 - [ ] **Step 7: Add `minutesOf` to derive**
 
-In the `SLP.derive` IIFE, after the `touched` helper (line 754):
+In the `SLP.derive` IIFE, after the `touched` helper (ends line 758):
 
 ```js
   // A slot and a session both carry startTime/endTime, so one helper reads both.
@@ -332,7 +339,7 @@ In the `SLP.derive` IIFE, after the `touched` helper (line 754):
   }
 ```
 
-Add `minutesOf` to the derive return list (line 850).
+Add `minutesOf` to the derive return list (line 854).
 
 - [ ] **Step 8: Run the tests to verify they pass**
 
@@ -342,7 +349,7 @@ Expected: all previously-passing tests still pass (254 + the new ones), 0 failed
 - [ ] **Step 9: Commit**
 
 ```bash
-git -C /home/brenden/dev/slp-tracker add slp-tracker.html tests/index.html tests/attendance-derive.test.js tests/attendance-store.test.js tests/attendance-ui.test.js
+git -C /home/brenden/dev/slp-tracker add index.html tests/index.html tests/attendance-derive.test.js tests/attendance-store.test.js tests/attendance-ui.test.js
 git -C /home/brenden/dev/slp-tracker commit -m "feat: widen the attendance vocabulary to four outcomes, plus unmarked"
 ```
 
@@ -351,7 +358,7 @@ git -C /home/brenden/dev/slp-tracker commit -m "feat: widen the attendance vocab
 ## Task 2: The makeup debt arithmetic
 
 **Files:**
-- Modify: `slp-tracker.html` — `SLP.derive` IIFE, after `minutesOf`
+- Modify: `index.html` — `SLP.derive` IIFE, after `minutesOf`
 - Test: `tests/attendance-derive.test.js` (append)
 
 **Interfaces:**
@@ -450,7 +457,7 @@ Expected: all pass, 0 failed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git -C /home/brenden/dev/slp-tracker add slp-tracker.html tests/attendance-derive.test.js
+git -C /home/brenden/dev/slp-tracker add index.html tests/attendance-derive.test.js
 git -C /home/brenden/dev/slp-tracker commit -m "feat: makeup debt arithmetic, with the missed-makeup no-op"
 ```
 
@@ -461,7 +468,7 @@ git -C /home/brenden/dev/slp-tracker commit -m "feat: makeup debt arithmetic, wi
 The number she publishes. Every rule below is one a later well-meaning edit could quietly break, so each gets its own test.
 
 **Files:**
-- Modify: `slp-tracker.html` — `SLP.derive` IIFE, after `makeupBalance`
+- Modify: `index.html` — `SLP.derive` IIFE, after `makeupBalance`
 - Test: `tests/attendance-derive.test.js` (append)
 
 **Interfaces:**
@@ -602,7 +609,7 @@ Expected: all pass, 0 failed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git -C /home/brenden/dev/slp-tracker add slp-tracker.html tests/attendance-derive.test.js
+git -C /home/brenden/dev/slp-tracker add index.html tests/attendance-derive.test.js
 git -C /home/brenden/dev/slp-tracker commit -m "feat: the quarterly attendance percentage, in minutes, with uncharted in plain sight"
 ```
 
@@ -613,7 +620,7 @@ git -C /home/brenden/dev/slp-tracker commit -m "feat: the quarterly attendance p
 The whole page, as a pure function. After this task the entire feature is unit-testable without the harness ever opening a database.
 
 **Files:**
-- Modify: `slp-tracker.html` — `SLP.derive` IIFE, after `attendancePct`
+- Modify: `index.html` — `SLP.derive` IIFE, after `attendancePct`
 - Test: `tests/attendance-derive.test.js` (append)
 
 **Interfaces:**
@@ -882,7 +889,7 @@ Expected: all pass, 0 failed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git -C /home/brenden/dev/slp-tracker add slp-tracker.html tests/attendance-derive.test.js
+git -C /home/brenden/dev/slp-tracker add index.html tests/attendance-derive.test.js
 git -C /home/brenden/dev/slp-tracker commit -m "feat: derive.attendanceGrid — the whole page as a pure function"
 ```
 
@@ -891,7 +898,7 @@ git -C /home/brenden/dev/slp-tracker commit -m "feat: derive.attendanceGrid — 
 ## Task 5: The bulk read
 
 **Files:**
-- Modify: `slp-tracker.html` — `SLP.store` returned object, after `planForDate` (line 644)
+- Modify: `index.html` — `SLP.store` returned object, after `planForDate` (line 648)
 - Test: `tests/attendance-store.test.js` (append)
 
 **Interfaces:**
@@ -970,7 +977,7 @@ Expected: all four fail with `w.SLP.store.attendanceRange is not a function`.
 
 - [ ] **Step 3: Implement `attendanceRange`**
 
-In the `SLP.store` returned object, immediately after `planForDate` (which ends at line 644) and before the `// --- write paths` comment:
+In the `SLP.store` returned object, immediately after `planForDate` (which ends at line 648) and before the `// --- write paths` comment (line 650):
 
 ```js
     // --- the grid ---
@@ -999,7 +1006,7 @@ Expected: all pass, 0 failed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git -C /home/brenden/dev/slp-tracker add slp-tracker.html tests/attendance-store.test.js
+git -C /home/brenden/dev/slp-tracker add index.html tests/attendance-store.test.js
 git -C /home/brenden/dev/slp-tracker commit -m "feat: store.attendanceRange — one bulk read for the whole grid"
 ```
 
@@ -1008,7 +1015,7 @@ git -C /home/brenden/dev/slp-tracker commit -m "feat: store.attendanceRange — 
 ## Task 6: Session-level bulk marking
 
 **Files:**
-- Modify: `slp-tracker.html` — `SLP.store` returned object, after `setAttendance` (line 672)
+- Modify: `index.html` — `SLP.store` returned object, after `setAttendance` (line 676)
 - Test: `tests/attendance-store.test.js` (append)
 
 **Interfaces:**
@@ -1082,7 +1089,7 @@ Expected: all four fail with `w.SLP.store.setSessionAttendance is not a function
 
 - [ ] **Step 3: Implement `setSessionAttendance`**
 
-In the `SLP.store` returned object, immediately after `setAttendance` (ends line 672):
+In the `SLP.store` returned object, immediately after `setAttendance` (ends line 676):
 
 ```js
     // "I missed this whole session" is a bulk write, not a second field. A session-level
@@ -1129,7 +1136,7 @@ Expected: all pass, 0 failed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git -C /home/brenden/dev/slp-tracker add slp-tracker.html tests/attendance-store.test.js
+git -C /home/brenden/dev/slp-tracker add index.html tests/attendance-store.test.js
 git -C /home/brenden/dev/slp-tracker commit -m "feat: session-level marking as a bulk write that respects her own marks"
 ```
 
@@ -1140,7 +1147,7 @@ git -C /home/brenden/dev/slp-tracker commit -m "feat: session-level marking as a
 The page she asked for, read-only. Marking comes in Task 8.
 
 **Files:**
-- Modify: `slp-tracker.html:1103–1107` (TABS), CSS block (before `</style>` at line 201), new section at line ~2119, `SLP.derive` (add `monthRange`)
+- Modify: `index.html:1107–1111` (TABS), CSS block (before `</style>` at line 205), new section at line ~2126, `SLP.derive` (add `monthRange`)
 - Test: `tests/attendance-ui.test.js` (replace the placeholder comment), `tests/attendance-derive.test.js` (append `monthRange` tests)
 
 **Interfaces:**
@@ -1355,7 +1362,7 @@ Add `monthRange` to the derive return list.
 
 - [ ] **Step 4: Register the tab**
 
-`slp-tracker.html:1103–1107`. Replace:
+`index.html:1107–1111`. Replace:
 
 ```js
   const TABS = [
@@ -1378,7 +1385,7 @@ with:
 
 - [ ] **Step 5: Add the styles**
 
-In the CSS block, immediately before `</style>` (line 201):
+In the CSS block, immediately before `</style>` (line 205):
 
 ```css
   /* --- the attendance grid --- */
@@ -1418,7 +1425,7 @@ In the CSS block, immediately before `</style>` (line 201):
 
 - [ ] **Step 6: Write the view**
 
-Insert a new section in `slp-tracker.html` between the end of `ui.today` and the `// SECTION: ui.aggregation` header (line 2119):
+Insert a new section in `index.html` between the end of `ui.today` (`})();` at line 2125) and the `// SECTION: ui.aggregation` banner (starts line 2127):
 
 ```js
 // ============================================================
@@ -1564,12 +1571,22 @@ Layout is one of this app's three blind spots (the others are scroll position an
 - `td.att-pct` and `td.att-owed` (must be pinned to the right edge while the day columns scroll under them)
 - `.att-wrap` `scrollWidth` vs `clientWidth` (must exceed it for a quarter, proving the scroll is inside the wrapper and not on the document)
 
-Drive it the same way `run-tests.sh` drives Chrome. Record the numbers in the commit message. Headless screenshots do not work here — IndexedDB does not advance under `--virtual-time-budget` — so measurement is the only check available.
+Drive it the same way `run-tests.sh` drives Chrome. Record the numbers in the commit message.
+
+**Headless screenshots do work — take one as well.** Earlier handoffs say they don't; that was half right. The culprit is `--virtual-time-budget`, which freezes IndexedDB so the app never finishes booting and the page captures blank. **Drop that flag and `--screenshot` renders the real app.** Verified 2026-09-02 against both the local file and the hosted URL:
+
+```bash
+google-chrome --headless=new --no-sandbox --disable-gpu \
+  --user-data-dir=/tmp/att-shot --window-size=1400,900 \
+  --screenshot=tmp/attendance.png "file:///home/brenden/dev/slp-tracker/index.html"
+```
+
+A blank capture means the flag crept back in, or the shot beat the async render — take a second one before concluding the layout is broken. The grid is this app's widest, most alignment-dependent surface; a picture catches the sticky-column overlap that a `getBoundingClientRect()` number can agree with and still look wrong.
 
 - [ ] **Step 9: Commit**
 
 ```bash
-git -C /home/brenden/dev/slp-tracker add slp-tracker.html tests/attendance-derive.test.js tests/attendance-ui.test.js
+git -C /home/brenden/dev/slp-tracker add index.html tests/attendance-derive.test.js tests/attendance-ui.test.js
 git -C /home/brenden/dev/slp-tracker commit -m "feat: the Attendance tab — her caseload over a range she picks"
 ```
 
@@ -1578,7 +1595,7 @@ git -C /home/brenden/dev/slp-tracker commit -m "feat: the Attendance tab — her
 ## Task 8: Marking a cell
 
 **Files:**
-- Modify: `slp-tracker.html` — `ui.attendance` section (cell handler, popover), CSS block
+- Modify: `index.html` — `ui.attendance` section (cell handler, popover), CSS block
 - Test: `tests/attendance-ui.test.js` (append)
 
 **Interfaces:**
@@ -1822,7 +1839,7 @@ Expected: all pass, 0 failed.
 - [ ] **Step 6: Commit**
 
 ```bash
-git -C /home/brenden/dev/slp-tracker add slp-tracker.html tests/attendance-ui.test.js
+git -C /home/brenden/dev/slp-tracker add index.html tests/attendance-ui.test.js
 git -C /home/brenden/dev/slp-tracker commit -m "feat: mark a cell from the grid, one student or the whole session"
 ```
 
@@ -1831,7 +1848,7 @@ git -C /home/brenden/dev/slp-tracker commit -m "feat: mark a cell from the grid,
 ## Task 9: Booking a makeup, and deleting one
 
 **Files:**
-- Modify: `slp-tracker.html` — `SLP.store` (after `setSessionAttendance`), `SLP.derive` (`makeupDuration`), `ui.attendance` (booking form), CSS
+- Modify: `index.html` — `SLP.store` (after `setSessionAttendance`), `SLP.derive` (`makeupDuration`), `ui.attendance` (booking form), CSS
 - Test: `tests/attendance-store.test.js`, `tests/attendance-derive.test.js`, `tests/attendance-ui.test.js` (append to each)
 
 **Interfaces:**
@@ -2238,7 +2255,7 @@ Expected: all pass, 0 failed.
 - [ ] **Step 7: Commit**
 
 ```bash
-git -C /home/brenden/dev/slp-tracker add slp-tracker.html tests/attendance-derive.test.js tests/attendance-store.test.js tests/attendance-ui.test.js
+git -C /home/brenden/dev/slp-tracker add index.html tests/attendance-derive.test.js tests/attendance-store.test.js tests/attendance-ui.test.js
 git -C /home/brenden/dev/slp-tracker commit -m "feat: book a makeup from the Owed column, and undo a mis-booking"
 ```
 
@@ -2249,13 +2266,13 @@ git -C /home/brenden/dev/slp-tracker commit -m "feat: book a makeup from the Owe
 She writes progress notes one student at a time. This is where she will already be looking.
 
 **Files:**
-- Modify: `slp-tracker.html` — `ui.attendance` (export a summary renderer), `ui.students` `renderDetail` (call it), `SLP` version at line 210
+- Modify: `index.html` — `ui.attendance` (export a summary renderer), `ui.students` `renderDetail` (call it), `SLP` version at line 214
 - Test: `tests/attendance-ui.test.js` (append)
 
 **Interfaces:**
 - Consumes: `store.attendanceRange`, `derive.attendanceGrid`, `derive.monthRange`
 - Produces:
-  - `SLP.ui.students.renderAttendance(container, student)` — a hook `renderDetail` calls, matching the existing `renderAggregation` shape at `slp-tracker.html:2268`
+  - `SLP.ui.students.renderAttendance(container, student)` — a hook `renderDetail` calls, matching the existing `renderAggregation` shape at `index.html:2276`
   - DOM: `#student-attendance`, `#student-attendance-from`, `#student-attendance-to`, `#student-attendance-pct`, `#student-attendance-owed`
 
 - [ ] **Step 1: Write the failing tests**
@@ -2322,14 +2339,14 @@ test('the student page and the grid never disagree', async () => {
 
 test('the version records that Attendance shipped', async () => {
   const w = await loadApp();
-  eq(w.SLP.version, '1.6.0', 'a new tab is a minor bump');
+  eq(w.SLP.version, '1.7.0', 'a new tab is a minor bump');
 });
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run (background): `bash /home/brenden/dev/slp-tracker/tests/run-tests.sh`
-Expected: `#student-attendance` is null; the version is still `1.5.0`.
+Expected: `#student-attendance` is null; the version is still `1.6.0`.
 
 - [ ] **Step 3: Export the summary from `ui.attendance`**
 
@@ -2373,11 +2390,11 @@ In the `ui.attendance` IIFE, add its own range state and the hook — after `SLP
   };
 ```
 
-Note: `SLP.ui.students` is created at `slp-tracker.html:1746`, which runs before this section, so assigning onto it here is safe — the same arrangement `ui.aggregation` uses at line 2268.
+Note: `SLP.ui.students` is created at `index.html:1754`, which runs before this section, so assigning onto it here is safe — the same arrangement `ui.aggregation` uses at line 2276.
 
 - [ ] **Step 4: Call the hook from `renderDetail`**
 
-`slp-tracker.html:1652–1655`. Replace:
+`index.html:1660–1663`. Replace:
 
 ```js
     // Task 12 appends the history and progress sections here.
@@ -2402,16 +2419,16 @@ with:
 
 - [ ] **Step 5: Bump the version**
 
-`slp-tracker.html:210`. Replace:
+`index.html:214`. Replace:
 
 ```js
-window.SLP = { version: '1.5.0' };
+window.SLP = { version: '1.6.0' };
 ```
 
 with:
 
 ```js
-window.SLP = { version: '1.6.0' };
+window.SLP = { version: '1.7.0' };
 ```
 
 - [ ] **Step 6: Run the tests to verify they pass**
@@ -2421,7 +2438,7 @@ Expected: the whole suite passes, 0 failed.
 
 - [ ] **Step 7: Hand-check the loop end to end**
 
-A green suite is blind to layout, scroll position and async timing — all three of this app's failure modes. Open `slp-tracker.html` in a real browser, restore `tmp/slp-test-data.json` through the backup UI, and walk the loop:
+A green suite is blind to layout, scroll position and async timing — all three of this app's failure modes. Open `index.html` in a real browser, restore `tmp/slp-test-data.json` through the backup UI, and walk the loop:
 
 1. Open Attendance. The range is the current month; the grid scrolls sideways while her name, `%` and `Owed` stay put.
 2. Mark a cell `missed`. `Owed` shows `−30 min` without the page jumping back to the header.
@@ -2433,7 +2450,7 @@ A green suite is blind to layout, scroll position and async timing — all three
 - [ ] **Step 8: Commit**
 
 ```bash
-git -C /home/brenden/dev/slp-tracker add slp-tracker.html tests/attendance-ui.test.js
+git -C /home/brenden/dev/slp-tracker add index.html tests/attendance-ui.test.js
 git -C /home/brenden/dev/slp-tracker commit -m "feat: the attendance percentage on the student page, where she writes the note"
 ```
 

@@ -1,6 +1,6 @@
 # Handoff — the app is hosted as a beta env; the attendance plan is now accurate
 
-**Written:** 2026-09-03 01:52 UTC · **Branch:** `main` · **HEAD:** `c97d4ec` ·
+**Written:** 2026-09-03 01:52 UTC · **Branch:** `main` · **HEAD:** `e6e9ee9` ·
 **Previous handoff:** `2026-08-26-0053-attendance-percentage-and-today-collapse.md`
 
 ---
@@ -112,7 +112,7 @@ No state-verification script in this repo; the test run and a fetch of the live 
 checks.
 
 ```bash
-git -C /home/brenden/dev/slp-tracker log --oneline -3   # expect c97d4ec, b71b5aa, 121855f
+git -C /home/brenden/dev/slp-tracker rev-parse --short HEAD  # e6e9ee9, or this handoff on top
 git -C /home/brenden/dev/slp-tracker status --short     # expect clean
 bash /home/brenden/dev/slp-tracker/tests/run-tests.sh   # expect 256 tests, 0 failed (~2 min)
 curl -sS -o /dev/null -w '%{http_code}\n' https://brendenriggs.github.io/slp-tracker/  # 200

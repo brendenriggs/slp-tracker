@@ -344,6 +344,13 @@ SLP.model = (() => {
     Math.random().toString(36).slice(2, 7);
   const now = () => new Date().toISOString();
 
+  // One field carries the outcome, so the vocabulary lives in one place.
+  // `null` is legal too and is deliberately NOT in this list: it means a makeup
+  // that is booked but not yet held — the row exists to carry isMakeup, and the
+  // outcome has not happened. Listing it would invite `status ?? 'unmarked'`
+  // arithmetic; keeping it out forces every reader to handle "no answer yet".
+  const ATTENDANCE_STATUSES = Object.freeze(['present', 'absent', 'missed', 'cancelled']);
+
   const field = ({ label, type = 'number', default: def = null, role = null }) => ({
     id: uid('f'), label, type, default: type === 'number' ? def : null, role,
   });
@@ -435,7 +442,7 @@ SLP.model = (() => {
 
   return {
     uid, now, field, presetTrials, seedValues, setValue, hasEnteredData, ratio, displayText,
-    GRADES, gradeLabel,
+    GRADES, gradeLabel, ATTENDANCE_STATUSES,
 
     student: ({ name, grade = '', school = '', background = '' }) => ({
       id: uid('s'), name, grade, school, background,
@@ -453,9 +460,13 @@ SLP.model = (() => {
     session: ({ date, slotId = null, startTime, endTime, location = '', roster = [] }) => ({
       id: uid('se'), date, slotId, startTime, endTime, location, roster, createdAt: now(),
     }),
-    attendance: ({ sessionId, studentId, status, participation = 'scheduled', isMakeup = false }) => ({
-      id: uid('at'), sessionId, studentId, status, participation, isMakeup, updatedAt: now(),
-    }),
+    attendance: ({ sessionId, studentId, status, participation = 'scheduled', isMakeup = false }) => {
+      if (status !== null && !ATTENDANCE_STATUSES.includes(status)) {
+        throw new Error('unknown attendance status: ' + status);
+      }
+      return { id: uid('at'), sessionId, studentId, status, participation, isMakeup,
+               updatedAt: now() };
+    },
     note: ({ sessionId, studentId, text = '' }) => ({
       id: uid('n'), sessionId, studentId, text, updatedAt: now(),
     }),
@@ -505,7 +516,9 @@ SLP.store = (() => {
   // Attendance derives from data entry, but never overrides an explicit mark.
   async function deriveAttendance(session, studentId) {
     const existing = await rowFor('attendance', session.id, studentId);
-    if (existing && existing.status !== 'present') return existing;   // hers, leave it
+    // A status she chose is hers and is left alone. A null one is not a choice —
+    // it is a makeup she booked and has not held yet, so data entry may fill it in.
+    if (existing && existing.status && existing.status !== 'present') return existing;
 
     const dps = (await db.getAllBy('datapoints', 'sessionId', session.id))
       .filter(d => d.studentId === studentId);
@@ -523,6 +536,19 @@ SLP.store = (() => {
       return row;
     }
     // Nothing entered any more — withdraw a mark the app itself derived.
+    // But a booked makeup is not a derived mark: she scheduled it. Clearing a note
+    // undoes the charting, not the appointment, so the row survives with its status
+    // reset to null — back to "makeup booked, unmarked". Deleting it here destroyed
+    // the booking: the credit vanished, the debt silently returned, and the row could
+    // no longer be cancelled from the grid, since that control is gated on isMakeup.
+    // Cancelling a makeup stays a deliberate act through the grid's delete control.
+    // See docs/adr/0002-clearing-a-note-keeps-the-makeup-booking.md.
+    if (existing && existing.isMakeup) {
+      existing.status = null;
+      existing.updatedAt = m.now();
+      await db.put('attendance', existing);
+      return existing;
+    }
     if (existing) await db.del('attendance', existing.id);
     return null;
   }
@@ -683,6 +709,9 @@ SLP.store = (() => {
     },
 
     async setAttendance({ dateStr, slot, studentId, status }) {
+      if (status !== null && !m.ATTENDANCE_STATUSES.includes(status)) {
+        throw new Error('unknown attendance status: ' + status);
+      }
       const session = await ensureSession(dateStr, slot);
       const existing = await rowFor('attendance', session.id, studentId);
       const row = existing || m.attendance({
@@ -777,10 +806,27 @@ SLP.derive = (() => {
     return Object.values(dps).some(m.hasEnteredData);
   }
 
+  // A slot and a session both carry startTime/endTime, so one helper reads both.
+  // Session times are snapshotted at materialization, which is why minutes need no
+  // stored field: a later edit of the slot can never rewrite what a past session was
+  // worth. Unusable input is 0, never NaN — a single NaN would poison a whole column.
+  function minutesOf(span) {
+    const toMin = t => {
+      const parts = String(t == null ? '' : t).split(':');
+      const hh = Number(parts[0]), mm = Number(parts[1]);
+      return Number.isFinite(hh) && Number.isFinite(mm) ? hh * 60 + mm : null;
+    };
+    const a = toMin(span && span.startTime), b = toMin(span && span.endTime);
+    if (a === null || b === null) return 0;
+    return Math.max(0, b - a);
+  }
+
   function studentState(entry, studentId) {
     const a = entry.attendance[studentId];
-    if (a && a.status !== 'present') return a.status;   // absent / excused / cancelled
+    if (a && a.status && a.status !== 'present') return a.status;   // absent / missed / cancelled
     if (a && a.status === 'present') return 'present';
+    // A null status carries no outcome, so fall through: whether she has charted
+    // anything is the honest answer, exactly as it is for a student with no row.
     return touched(entry, studentId) ? 'present' : 'none';
   }
 
@@ -871,7 +917,7 @@ SLP.derive = (() => {
     return (known || []).find(k => String(k).toLowerCase() === key) || name;
   }
 
-  return { studentState, chartedCount, objectivesCharted, series, mastery, pair,
+  return { studentState, chartedCount, objectivesCharted, series, mastery, pair, minutesOf,
            schools, canonicalSchool };
 })();
 
@@ -2303,8 +2349,8 @@ SLP.ui = (() => {
                       text: prettyDate(row.session.date) + ' · ' + row.session.startTime }),
           ' ',
           h('span', { class: 'state-chip',
-                      'data-state': row.attendance ? row.attendance.status : 'none',
-                      text: row.attendance ? row.attendance.status : 'not charted' })),
+                      'data-state': (row.attendance && row.attendance.status) || 'none',
+                      text: (row.attendance && row.attendance.status) || 'not charted' })),
         summary ? h('div', { class: 'history-data', text: summary }) : null,
         row.note && row.note.text ? h('p', { class: 'history-note', text: row.note.text }) : null));
     }

@@ -9,15 +9,15 @@ Decisions that depend on the clinician live in `docs/OPEN-QUESTIONS.md`, not her
 
 ## Deleting a slot hides sessions already charted against it
 
-**Raised:** 2026-09-03 by audit · **Status:** scheduled
+**Raised:** 2026-09-03 by audit · **Status:** done, 2026-09-03 (`11c9950`)
 
-`deleteSlot` does not cascade, and the toast promises "Sessions already charted are
-untouched" — but `planForDate` only rescues slotless sessions as ad hoc
-(`.filter(s => !s.slotId)`). A session whose slot was deleted keeps a dangling `slotId`,
-belongs to nothing, and disappears from Today. Its note survives on the student's page but
-is read-only there, which is why she ends up retyping.
+`deleteSlot` now nulls the `slotId` on the sessions that referenced it, so the existing
+ad-hoc path folds them back into Today. A session whose slot is gone genuinely has no
+template any more, and it renders from the time, roster and location snapshot it already
+carries. Three regression tests.
 
-This is the trap her slot-time workaround walks into. Fixing it needs no input from her.
+The workaround this trap sat behind — deleting and recreating a slot to fix its time — is
+still the only way to change a slot's time. That remains gated on her answer to question 2.
 
 ---
 
@@ -38,14 +38,17 @@ forward-only one need different designs. Ask her before designing.
 
 ## Deferred, still true
 
-- **The `chart()` percent axis is hardcoded at 100**, so a score above criterion computes a
-  negative `y` and the point is clipped away entirely — her best session is the one that
-  vanishes. Decided in `docs/adr/0003-objective-charts-scale-past-criterion.md`; scheduled.
+- ~~**The `chart()` percent axis is hardcoded at 100**~~ — done 2026-09-03 (`4c700b7`). The
+  ceiling rises to the highest datapoint and a dashed line marks 100%, per
+  `docs/adr/0003-objective-charts-scale-past-criterion.md`.
 - **The day-long tab-through** is still deferred.
-- **The scroll fix and the Today collapse have never been confirmed by hand.** The
-  measurable half is scheduled as regression tests, including two untested cases: paging to
-  a different day preserves the scroll offset, and content shrinking below the saved offset
-  clamps her somewhere she was not looking. Whether collapsed-by-default is right at all is
-  question 3 in `docs/OPEN-QUESTIONS.md`.
+- **The Today collapse has never been confirmed by hand**, and whether collapsed-by-default
+  is right at all is question 3 in `docs/OPEN-QUESTIONS.md`.
+- ~~**The scroll fix's two untested cases**~~ — done 2026-09-03 (`6cecef4`). Paging to a
+  different day was preserving the offset and now starts at the top. The shrinking-content
+  case turned out not to be a bug: a drastic shrink already lands at the top by clamping,
+  and keeping her at the clamped bottom of a moderate one is deliberate — the alternative
+  throws her to the header whenever she collapses a card at the end of a long day. Both are
+  pinned in `tests/scroll-restore.test.js` so the reasoning is not re-derived.
 - **Stage 2 of attendance** (service targets, forward projection) is blocked on question 5
   in `docs/OPEN-QUESTIONS.md`.

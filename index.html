@@ -249,6 +249,14 @@
   .att-owed-debt { color: var(--warn); }
   .att-legend { font-size: 12px; color: var(--muted); margin: 10px 0 0;
                 display: flex; flex-wrap: wrap; gap: 12px; }
+  .att-popover { position: absolute; z-index: 20; background: var(--bg);
+                 border: 1px solid var(--line); border-radius: 8px; padding: 8px;
+                 box-shadow: 0 4px 14px rgba(0,0,0,.12); min-width: 190px; }
+  .att-popover h3 { font-size: 11px; margin: 0 0 6px; text-transform: uppercase;
+                    letter-spacing: .5px; color: var(--muted); font-weight: 600; }
+  .att-popover .att-choices { display: flex; flex-direction: column; gap: 2px; }
+  .att-popover button { text-align: left; }
+  .att-popover hr { border: 0; border-top: 1px solid var(--line); margin: 8px 0 6px; }
 </style>
 </head>
 <body>
@@ -2465,7 +2473,8 @@ SLP.ui = (() => {
 
   // Survives re-render within the tab, like ui.schedule's draft. The range is null
   // until the first render so it can default to whatever month she opens it in.
-  const ui = { search: '', gradeFilter: '', schoolFilter: '', range: null };
+  const ui = { search: '', gradeFilter: '', schoolFilter: '', range: null,
+               marking: null };   // { studentId, date, sessionId, slotId }
 
   // Glyph AND colour, never colour alone: her highlighter system does not survive a
   // colourblind reader or a grayscale print, and these go home in a folder.
@@ -2519,6 +2528,13 @@ SLP.ui = (() => {
       'data-slot-id': cell.slotId,
       'aria-label': row.student.name + ', ' + date + ': ' + LABEL[cell.state] +
                     (cell.isMakeup ? ' (makeup)' : ''),
+      'on:click': () => {
+        ui.marking = {
+          studentId: row.student.id, studentName: row.student.name, date,
+          sessionId: cell.sessionId, slotId: cell.slotId,
+        };
+        SLP.ui.render();
+      },
     }, ...makeupGlyph(cell));
   }
 
@@ -2586,6 +2602,77 @@ SLP.ui = (() => {
         h('thead', {}, monthRow, head), h('tbody', {}, body)));
   }
 
+  // A slot object is what setAttendance wants, and the cell may know only a sessionId
+  // (an ad-hoc session has no slot at all). ensureSession is keyed on slot.id, so a
+  // session with no slot needs its own path: write straight to the row instead.
+  async function markCell(target, status, wholeSession) {
+    const { date, slotId, sessionId, studentId } = target;
+    if (slotId) {
+      const slot = (await SLP.store.listSlots()).find(s => s.id === slotId);
+      if (slot) {
+        if (wholeSession) {
+          await SLP.store.setSessionAttendance({ dateStr: date, slot, status });
+        } else {
+          await SLP.store.setAttendance({ dateStr: date, slot, studentId, status });
+        }
+        return;
+      }
+    }
+    // No slot: a one-off session. Its row is written directly, and a session-wide
+    // sweep walks the roster the same way store.setSessionAttendance does.
+    if (!sessionId) return;
+    const session = await SLP.db.get('sessions', sessionId);
+    if (!session) return;
+    const rows = await SLP.db.getAllBy('attendance', 'sessionId', sessionId);
+    const targets = wholeSession ? session.roster : [studentId];
+    for (const id of targets) {
+      const prior = rows.find(r => r.studentId === id);
+      if (wholeSession && prior && prior.status && prior.status !== 'present') continue;
+      const row = prior || SLP.model.attendance({
+        sessionId, studentId: id, status,
+        participation: session.roster.includes(id) ? 'scheduled' : 'added' });
+      row.status = status;
+      row.updatedAt = SLP.model.now();
+      await SLP.db.put('attendance', row);
+    }
+  }
+
+  function choice(status, wholeSession) {
+    return h('button', {
+      class: (wholeSession ? 'att-choice-session' : 'att-choice') + ' plain',
+      type: 'button', 'data-status': status,
+      text: (wholeSession ? 'Whole session: ' : '') + LABEL[status],
+      'on:click': async () => {
+        const target = ui.marking;
+        ui.marking = null;
+        await markCell(target, status, wholeSession);
+        await SLP.ui.render();
+      },
+    });
+  }
+
+  // Rendered into the page rather than positioned against the clicked element: every
+  // render tears #app down, so an element-anchored popover would have nothing to
+  // anchor to on the way back. The route through state is the same one the Today
+  // card's expansion takes.
+  function popover() {
+    if (!ui.marking) return null;
+    return h('div', { class: 'att-popover panel', id: 'att-popover',
+                      'data-student-id': ui.marking.studentId,
+                      'data-date': ui.marking.date, role: 'dialog',
+                      'aria-label': 'Mark ' + ui.marking.studentName + ' on ' + ui.marking.date },
+      h('h3', { text: ui.marking.studentName + ' · ' + ui.marking.date }),
+      h('div', { class: 'att-choices' },
+        SLP.model.ATTENDANCE_STATUSES.map(s => choice(s, false)),
+        h('hr', {}),
+        // One reason to mark a whole session at once, and it is the honest one:
+        // a closure or a day she was out is not a per-child fact.
+        choice('missed', true),
+        choice('cancelled', true)),
+      h('button', { class: 'linkish', id: 'att-popover-close', type: 'button', text: 'Cancel',
+                    'on:click': async () => { ui.marking = null; await SLP.ui.render(); } }));
+  }
+
   SLP.ui.views.attendance = async (root) => {
     // One control, two jobs: left at its default she marks the current month and
     // scrolls a little; set to a quarter at progress-note time she does not scroll
@@ -2634,7 +2721,8 @@ SLP.ui = (() => {
         : grid.rows.length
           ? gridTable(grid)
           : h('p', { class: 'empty', text: 'No students match.' }),
-      legend()));
+      legend(),
+      popover()));
   };
 })();
 

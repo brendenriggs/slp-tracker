@@ -213,3 +213,91 @@ test('an end date before the start says so instead of emptying the caseload', as
      'an empty grid alone reads as "my students are gone", not "I typed the dates backwards"');
   eq(doc.querySelector('#attendance-grid'), null, 'and no grid is drawn from a range that has no days');
 });
+
+function attUiPopover(doc) { return doc.querySelector('#att-popover'); }
+
+async function attUiOpenCell(w, student, date) {
+  attUiCells(w.document, student, date)[0].click();
+  await w.SLP.ui.render();
+  return attUiPopover(w.document);
+}
+
+test('clicking a cell offers the four outcomes rather than cycling', async () => {
+  const w = await loadApp();
+  const { ada } = await attUiSeed(w);
+  await attUiOpen(w, '2026-10-05', '2026-10-09');
+  const pop = await attUiOpenCell(w, ada, ATT_UI_MONDAY);
+  assert(pop, 'a popover, not a click-to-cycle');
+  const offered = Array.from(pop.querySelectorAll('.att-choice'))
+    .map(b => b.dataset.status).sort();
+  eq(offered, ['absent', 'cancelled', 'missed', 'present'],
+     'four states means overshooting, and cycling hides the vocabulary');
+});
+
+test('picking an outcome writes it and closes the popover', async () => {
+  const w = await loadApp();
+  const { ada } = await attUiSeed(w);
+  await attUiOpen(w, '2026-10-05', '2026-10-09');
+  const pop = await attUiOpenCell(w, ada, ATT_UI_MONDAY);
+  pop.querySelector('.att-choice[data-status="missed"]').click();
+  await w.SLP.ui.render();
+
+  eq(attUiCells(w.document, ada, ATT_UI_MONDAY)[0].dataset.state, 'missed',
+     'the cell shows what she chose');
+  assert(!attUiPopover(w.document), 'and the popover is gone');
+});
+
+test('a mark made in the grid shows up in the owed column immediately', async () => {
+  const w = await loadApp();
+  const { ada } = await attUiSeed(w);
+  await attUiOpen(w, '2026-10-01', '2026-10-31');
+  const pop = await attUiOpenCell(w, ada, ATT_UI_MONDAY);
+  pop.querySelector('.att-choice[data-status="missed"]').click();
+  await w.SLP.ui.render();
+  assert(attUiRow(w.document, ada).querySelector('td.att-owed').textContent.includes('30'),
+     'the Owed column is the answer to "who needs makeup sessions"');
+});
+
+test('the popover can mark the whole session at once', async () => {
+  const w = await loadApp();
+  const { ada, bo } = await attUiSeed(w);
+  await attUiOpen(w, '2026-10-05', '2026-10-09');
+  const pop = await attUiOpenCell(w, ada, ATT_UI_MONDAY);
+  pop.querySelector('.att-choice-session[data-status="cancelled"]').click();
+  await w.SLP.ui.render();
+
+  eq(attUiCells(w.document, ada, ATT_UI_MONDAY)[0].dataset.state, 'cancelled', 'Ada');
+  eq(attUiCells(w.document, bo, ATT_UI_MONDAY)[0].dataset.state, 'cancelled',
+     'a snow day closed the school for everyone in the room');
+});
+
+test('only one popover is open at a time', async () => {
+  const w = await loadApp();
+  const { ada, bo } = await attUiSeed(w);
+  await attUiOpen(w, '2026-10-05', '2026-10-09');
+  await attUiOpenCell(w, ada, ATT_UI_MONDAY);
+  await attUiOpenCell(w, bo, ATT_UI_MONDAY);
+  eq(w.document.querySelectorAll('#att-popover').length, 1, 'exactly one');
+  eq(attUiPopover(w.document).dataset.studentId, bo.id, 'and it is the one she just clicked');
+});
+
+test('marking a day the schedule never had still works', async () => {
+  const w = await loadApp();
+  const { ada, slot } = await attUiSeed(w);
+  // A one-off session on a Wednesday: no slot, so the cell comes from the session.
+  // Written straight to the store because Task 9's bookMakeup does not exist yet — and
+  // this test is about marking an ad-hoc cell, not about how it came to be booked.
+  await w.SLP.db.put('sessions', w.SLP.model.session({
+    date: '2026-10-07', slotId: null, startTime: '11:00', endTime: '11:30',
+    roster: [ada.id] }));
+  const doc = await attUiOpen(w, '2026-10-05', '2026-10-09');
+  const cells = attUiCells(doc, ada, '2026-10-07');
+  eq(cells.length, 1, 'the ad-hoc session has a cell');
+  cells[0].click();
+  await w.SLP.ui.render();
+  const pop = attUiPopover(w.document);
+  pop.querySelector('.att-choice[data-status="present"]').click();
+  await w.SLP.ui.render();
+  eq(attUiCells(w.document, ada, '2026-10-07')[0].dataset.state, 'present',
+     'a session with no slot is still markable');
+});

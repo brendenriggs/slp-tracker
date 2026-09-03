@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs the test suite in headless Chrome against the real slp-tracker.html.
+# Runs the test suite in headless Chrome against the real index.html.
 # Usage: bash tests/run-tests.sh
 set -u
 

@@ -56,7 +56,7 @@ test('data written by one app load is visible to the next', async () => {
   await w1.SLP.db.put('students', { id: 'persist1', name: 'Ada' });
   // loadApp() wipes the DB, so reload the frame directly instead.
   const frame = document.getElementById('app-frame');
-  await new Promise(res => { frame.onload = res; frame.src = '../slp-tracker.html?t=' + Date.now(); });
+  await new Promise(res => { frame.onload = res; frame.src = '../index.html?t=' + Date.now(); });
   const w2 = frame.contentWindow;
   await w2.SLP.ready;
   const got = await w2.SLP.db.get('students', 'persist1');

@@ -22,6 +22,10 @@
     border-bottom: 1px solid var(--line); padding: 10px 0 0;
   }
   .app-title { font-size: 15px; font-weight: 600; margin: 0 0 8px; }
+  .app-version {
+    margin: 32px 0 0; padding-top: 12px; border-top: 1px solid var(--line);
+    color: var(--muted); font-size: 12px; text-align: right;
+  }
   .tabs { display: flex; gap: 4px; }
   .tab {
     appearance: none; border: 1px solid var(--line); border-bottom: none;
@@ -207,7 +211,7 @@
 // SLP Session Tracker — one file, no build step, no network.
 // Sections below are ordered by dependency; each only uses those above it.
 // ============================================================
-window.SLP = { version: '1.5.0' };
+window.SLP = { version: '1.6.0' };
 
 // ============================================================
 // SECTION: db — IndexedDB access. Knows stores, not meaning.
@@ -1138,6 +1142,10 @@ SLP.ui = (() => {
     const view = views[route.tab];
     if (view) await view(root);
     else root.appendChild(h('p', { class: 'empty', text: 'Nothing here yet.' }));
+
+    // Version stamp. The app is hosted now, so "did you get the update?" has to be
+    // answerable over the phone — she reads this number back.
+    app.appendChild(h('p', { class: 'app-version', text: 'v' + SLP.version }));
 
     window.scrollTo(0, y);
   }

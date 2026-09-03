@@ -117,7 +117,7 @@ test('entered values survive a reload', async () => {
   await type(w, inputFor(w.document, ada, obj, achieved), '3');
 
   const frame = document.getElementById('app-frame');
-  await new Promise(res => { frame.onload = res; frame.src = '../slp-tracker.html?t=' + Date.now(); });
+  await new Promise(res => { frame.onload = res; frame.src = '../index.html?t=' + Date.now(); });
   const w2 = frame.contentWindow;
   await w2.SLP.ready;
   await w2.SLP.ui.go({ tab: 'today', date: MONDAY2 });

@@ -90,6 +90,13 @@ here.
 - **Controls anchor to the row they act on.** A popover or form that acts on one student's row
   is inserted as a `<tr>` immediately after that row, never appended at section level. The
   Today card's in-place expansion is the model.
+- **A control that survives a render is identified by its `id`.** Every render tears `#app`
+  down, so the node she was typing in is discarded and rebuilt. `doRender` restores the
+  scroll offset and the focused element (with its caret and selection) across that teardown,
+  and it finds the element again by `id` alone. So an `id` on an input or select is
+  load-bearing, not decoration: leave it off and the control silently loses the keyboard on
+  every keystroke. Do not solve this at a call site by refusing to re-render — that dodge was
+  taken twice before the third control could not use it.
 - **The template is not history.** Editing a slot never rewrites a past session.
 - **Never run anything on her machine.** All manual checks happen on Brenden's.
 - **She will never use git.** This repo is Brenden's history alone.

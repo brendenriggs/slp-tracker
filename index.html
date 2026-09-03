@@ -1558,10 +1558,61 @@ SLP.ui = (() => {
   // own. Both cases are pinned in tests/scroll-restore.test.js.
   let lastPlace = null;
 
+  // The same problem as the scroll offset, one layer in: the teardown below detaches
+  // whatever she was typing in, so focus falls to <body> and her caret is gone. A control
+  // is identified across the rebuild by its id, which is why the ids on the filter
+  // controls are load-bearing rather than decoration.
+  //
+  // The app dodged this twice before writing it down — both confirm-phrase boxes update a
+  // button's `disabled` in place rather than re-rendering. That works only for a control
+  // whose change affects nothing but itself; filtering a list IS the re-render, so the
+  // search box could not dodge it and neither will the next live-filtering control. Fixed
+  // here, once, rather than a third time at the call site. Pinned in
+  // tests/focus-restore.test.js.
+  //
+  // Only text-ish fields carry a selection: setSelectionRange throws InvalidStateError on
+  // date, time and number inputs, and the Attendance range is exactly those.
+  const SELECTABLE = ['text', 'search', 'url', 'tel', 'password'];
+
+  function focusSnapshot() {
+    const el = document.activeElement;
+    if (!el || !el.id || el === document.body) return null;
+    const selectable = el.tagName === 'TEXTAREA' ||
+      (el.tagName === 'INPUT' && SELECTABLE.includes(el.type));
+    return { id: el.id,
+             start: selectable ? el.selectionStart : null,
+             end: selectable ? el.selectionEnd : null,
+             dir: selectable ? el.selectionDirection : null };
+  }
+
+  function restoreFocus(snap) {
+    if (!snap) return;
+    const el = document.getElementById(snap.id);
+    // Gone because she navigated, or because the control genuinely left the page. Either
+    // way the keyboard belongs to whatever is there now — do not go hunting for a match.
+    if (!el || typeof el.focus !== 'function') return;
+    // preventScroll is load-bearing, not decoration: focus() scrolls its element into
+    // view by default, and this runs after doRender's scrollTo, so a bare focus() throws
+    // her to the search box every time she filters while reading down the list.
+    //
+    // Restoring before that scrollTo would mask the same bug — the scroll would get the
+    // last word — but then neither guard could fail on its own and the test pinning this
+    // would pass against a version with no protection at all. One mechanism, one test
+    // that can actually fail.
+    el.focus({ preventScroll: true });
+    if (snap.start === null || typeof el.setSelectionRange !== 'function') return;
+    try {
+      el.setSelectionRange(snap.start, snap.end, snap.dir || 'none');
+    } catch (e) {
+      // The field changed type across the render. Focus is the part that matters.
+    }
+  }
+
   async function doRender() {
     const app = $('#app');
     const place = route.tab + '/' + (route.studentId || '') + '/' + (route.date || '');
     const y = place === lastPlace ? window.scrollY : 0;
+    const focus = focusSnapshot();
     lastPlace = place;
     clear(app);
     app.appendChild(
@@ -1588,6 +1639,7 @@ SLP.ui = (() => {
     app.appendChild(h('p', { class: 'app-version', text: 'v' + SLP.version }));
 
     window.scrollTo(0, y);
+    restoreFocus(focus);
   }
 
   // Coalescing render loop. Two problems this solves at once:
@@ -3428,8 +3480,10 @@ SLP.ui = (() => {
       const box = h('input', { type: 'text', id: 'restore-confirm-phrase', autocomplete: 'off',
                                'aria-label': 'Type ' + PHRASE + ' to confirm',
                                placeholder: PHRASE, value: ui.typed });
-      // Updated in place rather than through a re-render, so the caret and what she has
-      // already typed survive every keystroke.
+      // Updated in place rather than through a re-render: this changes one button's
+      // `disabled` and nothing else, so a full page rebuild would be all cost. (It was
+      // once also the only way to keep her caret — doRender restores focus and selection
+      // now, so a re-render here would be correct, just wasteful.)
       box.addEventListener('input', () => {
         ui.typed = box.value;
         go.disabled = !mayReplace();
@@ -3480,8 +3534,10 @@ SLP.ui = (() => {
       const box = h('input', { type: 'text', id: 'start-fresh-phrase', autocomplete: 'off',
                                'aria-label': 'Type ' + CLEAR_PHRASE + ' to confirm',
                                placeholder: CLEAR_PHRASE, value: ui.typed });
-      // Updated in place rather than through a re-render, so the caret and what she has
-      // already typed survive every keystroke.
+      // Updated in place rather than through a re-render: this changes one button's
+      // `disabled` and nothing else, so a full page rebuild would be all cost. (It was
+      // once also the only way to keep her caret — doRender restores focus and selection
+      // now, so a re-render here would be correct, just wasteful.)
       box.addEventListener('input', () => {
         ui.typed = box.value;
         go.disabled = !mayClear();

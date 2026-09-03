@@ -179,3 +179,143 @@ test('a student with nothing offered reads as a dash, not zero', async () => {
   eq(attPct(w, []).pct, null, 'not 0%, which reads as a child who never came');
   eq(attPct(w, [attRow('2026-10-05', 'cancelled', 30)]).pct, null, 'and not NaN');
 });
+
+test('a row dated exactly today counts; one dated the next day does not', async () => {
+  const w = await loadApp();
+  // The exclusion is `r.date > today` — strict. A row dated today itself must
+  // still land in the denominator, or the last real day of a range in progress
+  // would silently drop out of her own paperwork.
+  const p = attPct(w, [attRow(ATT_TODAY, 'present', 30),
+                       attRow('2026-11-01', 'present', 30)]);
+  eq(p.offeredSessions, 1, 'today has happened and belongs in the count');
+  eq(p.heldSessions, 1, 'and it was held');
+  eq(p.pct, 100, 'tomorrow has not happened yet, so it cannot drag the figure down');
+});
+
+// 2026-10-05 is a Monday; 2026-10-10 is that Saturday.
+function attGridData(w, over) {
+  return Object.assign({
+    from: '2026-10-05', to: '2026-10-09', today: '2026-10-31',
+    students: [], slots: [], sessions: [], attendance: [],
+  }, over || {});
+}
+
+test('the grid shows weekdays only', async () => {
+  const w = await loadApp();
+  const g = w.SLP.derive.attendanceGrid(attGridData(w, { from: '2026-10-05', to: '2026-10-11' }));
+  eq(g.dates, ['2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09'],
+     'her paper form is M–F; a weekend would be two dead columns');
+});
+
+test('a weekend that carries a session still gets its column', async () => {
+  const w = await loadApp();
+  const m = w.SLP.model;
+  const ada = m.student({ name: 'Ada' });
+  const sat = m.session({ date: '2026-10-10', startTime: '10:00', endTime: '10:30',
+                          roster: [ada.id] });
+  const g = w.SLP.derive.attendanceGrid(attGridData(w, {
+    from: '2026-10-05', to: '2026-10-11', students: [ada], sessions: [sat] }));
+  assert(g.dates.includes('2026-10-10'),
+     'a makeup booked on a Saturday must not be written and then made invisible');
+});
+
+test('a scheduled slot with no session yields an unmarked cell', async () => {
+  const w = await loadApp();
+  const m = w.SLP.model;
+  const ada = m.student({ name: 'Ada' });
+  const slot = m.slot({ dayOfWeek: 1, startTime: '09:00', endTime: '09:30',
+                        studentIds: [ada.id] });
+  const g = w.SLP.derive.attendanceGrid(attGridData(w, { students: [ada], slots: [slot] }));
+  const cells = g.rows[0].cells['2026-10-05'];
+  eq(cells.length, 1, 'Monday is her day');
+  eq(cells[0].state, 'unmarked', 'scheduled, nothing entered');
+  eq(cells[0].minutes, 30, 'and it is worth 30 minutes');
+  eq(g.rows[0].cells['2026-10-06'], undefined, 'Tuesday is not her day at all');
+});
+
+test('a materialized session replaces its slot rather than doubling it', async () => {
+  const w = await loadApp();
+  const m = w.SLP.model;
+  const ada = m.student({ name: 'Ada' });
+  const slot = m.slot({ dayOfWeek: 1, startTime: '09:00', endTime: '09:30',
+                        studentIds: [ada.id] });
+  const session = m.session({ date: '2026-10-05', slotId: slot.id, startTime: '09:00',
+                              endTime: '09:30', roster: [ada.id] });
+  const row = m.attendance({ sessionId: session.id, studentId: ada.id, status: 'absent' });
+  const g = w.SLP.derive.attendanceGrid(attGridData(w, {
+    students: [ada], slots: [slot], sessions: [session], attendance: [row] }));
+  const cells = g.rows[0].cells['2026-10-05'];
+  eq(cells.length, 1, 'one session, one box — not the slot AND the session');
+  eq(cells[0].state, 'absent', 'and the session is what actually happened');
+});
+
+test('two sessions in one day render as two boxes, in time order', async () => {
+  const w = await loadApp();
+  const m = w.SLP.model;
+  const ada = m.student({ name: 'Ada' });
+  const late = m.session({ date: '2026-10-05', startTime: '13:00', endTime: '13:30',
+                           roster: [ada.id] });
+  const early = m.session({ date: '2026-10-05', startTime: '09:00', endTime: '09:30',
+                            roster: [ada.id] });
+  const g = w.SLP.derive.attendanceGrid(attGridData(w, {
+    students: [ada], sessions: [late, early] }));
+  const cells = g.rows[0].cells['2026-10-05'];
+  eq(cells.length, 2, 'merging would silently hide a miss');
+  eq(cells.map(c => c.startTime), ['09:00', '13:00'], 'in the order she worked them');
+});
+
+test('a makeup lands on a day that is not that student’s scheduled day', async () => {
+  const w = await loadApp();
+  const m = w.SLP.model;
+  const ada = m.student({ name: 'Ada' });
+  const slot = m.slot({ dayOfWeek: 1, startTime: '09:00', endTime: '09:30',
+                        studentIds: [ada.id] });
+  const makeup = m.session({ date: '2026-10-07', startTime: '11:00', endTime: '11:30',
+                             roster: [ada.id] });          // a Wednesday, slotId null
+  const row = m.attendance({ sessionId: makeup.id, studentId: ada.id,
+                             status: null, isMakeup: true });
+  const g = w.SLP.derive.attendanceGrid(attGridData(w, {
+    students: [ada], slots: [slot], sessions: [makeup], attendance: [row] }));
+  const cells = g.rows[0].cells['2026-10-07'];
+  eq(cells.length, 1, 'it appears on its own date');
+  eq(cells[0].state, 'unmarked', 'booked, not yet held');
+  eq(cells[0].isMakeup, true, 'and it must never read as a routine session');
+});
+
+test('a student with no slots at all still gets a row', async () => {
+  const w = await loadApp();
+  const ada = w.SLP.model.student({ name: 'Ada' });
+  const g = w.SLP.derive.attendanceGrid(attGridData(w, { students: [ada] }));
+  eq(g.rows.length, 1, 'she is on the caseload, so she is on the page');
+  eq(g.rows[0].cells, {}, 'with nothing scheduled');
+  eq(g.rows[0].pct.pct, null, 'and a dash, not a zero');
+});
+
+test('each row carries its own percentage and balance', async () => {
+  const w = await loadApp();
+  const m = w.SLP.model;
+  const ada = m.student({ name: 'Ada' });
+  const held = m.session({ date: '2026-10-05', startTime: '09:00', endTime: '09:30',
+                           roster: [ada.id] });
+  const skipped = m.session({ date: '2026-10-06', startTime: '09:00', endTime: '09:30',
+                              roster: [ada.id] });
+  const g = w.SLP.derive.attendanceGrid(attGridData(w, {
+    students: [ada], sessions: [held, skipped],
+    attendance: [
+      m.attendance({ sessionId: held.id, studentId: ada.id, status: 'present' }),
+      m.attendance({ sessionId: skipped.id, studentId: ada.id, status: 'missed' }),
+    ] }));
+  eq(g.rows[0].pct.pct, 100, 'the child was there for everything offered');
+  eq(g.rows[0].owed.owed, 30, 'and she owes the session she did not hold');
+});
+
+test('sessions outside the range are ignored even if handed in', async () => {
+  const w = await loadApp();
+  const m = w.SLP.model;
+  const ada = m.student({ name: 'Ada' });
+  const stray = m.session({ date: '2026-09-28', startTime: '09:00', endTime: '09:30',
+                            roster: [ada.id] });
+  const g = w.SLP.derive.attendanceGrid(attGridData(w, {
+    students: [ada], sessions: [stray] }));
+  eq(g.rows[0].cells, {}, 'the range is the range');
+});

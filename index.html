@@ -873,6 +873,103 @@ SLP.derive = (() => {
     return { pct, heldMinutes, offeredMinutes, heldSessions, offeredSessions, uncharted };
   }
 
+  const WEEKEND = new Set([0, 6]);
+  const pad2 = n => String(n).padStart(2, '0');
+
+  // Parsed as a local date so a range never shifts a day by timezone — the same
+  // reason store.dayOfWeek does it this way.
+  function dowOf(dateStr) {
+    const [y, mo, d] = String(dateStr).split('-').map(Number);
+    return new Date(y, mo - 1, d).getDay();
+  }
+
+  function eachDate(from, to) {
+    const [y, mo, d] = String(from).split('-').map(Number);
+    const cur = new Date(y, mo - 1, d);
+    const out = [];
+    // A guard, not a limit: 400 days is longer than any range she would pick, and
+    // it stops a malformed `to` spinning the loop forever. An inverted range
+    // (`from > to`) yields nothing rather than looping to the cap.
+    if (!from || !to || from > to) return out;
+    while (out.length < 400) {
+      const ds = cur.getFullYear() + '-' + pad2(cur.getMonth() + 1) + '-' + pad2(cur.getDate());
+      if (ds > to) break;
+      out.push(ds);
+      cur.setDate(cur.getDate() + 1);
+    }
+    return out;
+  }
+
+  // Her paper form, with the arithmetic done. Pure: hand it the output of
+  // store.attendanceRange and it returns everything on screen — no IndexedDB, no
+  // await, so the whole page is testable without the harness opening a database.
+  function attendanceGrid(data) {
+    const { from, to, today, students = [], slots = [],
+            sessions = [], attendance = [] } = data || {};
+    const inRange = sessions.filter(s => s.date >= from && s.date <= to);
+
+    // Weekdays are her form; a session is a fact. A makeup booked on a Saturday would
+    // otherwise be written to the database and then be invisible on the page that owns it.
+    const hasSession = new Set(inRange.map(s => s.date));
+    const dates = eachDate(from, to)
+      .filter(ds => !WEEKEND.has(dowOf(ds)) || hasSession.has(ds));
+
+    const rowsBySession = {};
+    for (const a of attendance) {
+      (rowsBySession[a.sessionId] || (rowsBySession[a.sessionId] = {}))[a.studentId] = a;
+    }
+
+    // A materialized session outranks the slot it came from: its roster and times are
+    // the snapshot of what actually happened, and the slot may have been edited since.
+    const spokenFor = new Set(inRange.filter(s => s.slotId).map(s => s.date + '|' + s.slotId));
+
+    const rows = students.map(student => {
+      const cells = {};
+      const push = (date, cell) => (cells[date] || (cells[date] = [])).push(cell);
+
+      for (const session of inRange) {
+        if (!(session.roster || []).includes(student.id)) continue;
+        const row = (rowsBySession[session.id] || {})[student.id] || null;
+        push(session.date, {
+          sessionId: session.id, slotId: session.slotId,
+          startTime: session.startTime, minutes: minutesOf(session),
+          state: (row && row.status) || 'unmarked',
+          isMakeup: !!(row && row.isMakeup),
+        });
+      }
+
+      for (const date of dates) {
+        const dow = dowOf(date);
+        for (const slot of slots) {
+          if (slot.dayOfWeek !== dow) continue;
+          if (!(slot.studentIds || []).includes(student.id)) continue;
+          if (spokenFor.has(date + '|' + slot.id)) continue;
+          push(date, {
+            sessionId: null, slotId: slot.id,
+            startTime: slot.startTime, minutes: minutesOf(slot),
+            state: 'unmarked', isMakeup: false,
+          });
+        }
+      }
+
+      for (const list of Object.values(cells)) {
+        list.sort((a, b) => String(a.startTime).localeCompare(String(b.startTime)));
+      }
+
+      // Both numbers come off the same cells; they differ only in which they read.
+      const flat = Object.entries(cells).flatMap(([date, list]) => list.map(c => ({
+        date, minutes: c.minutes, isMakeup: c.isMakeup,
+        status: c.state === 'unmarked' ? null : c.state,
+      })));
+
+      return { student, cells,
+               pct: attendancePct(flat, { today }),
+               owed: makeupBalance(flat) };
+    });
+
+    return { dates, rows };
+  }
+
   function studentState(entry, studentId) {
     const a = entry.attendance[studentId];
     if (a && a.status && a.status !== 'present') return a.status;   // absent / missed / cancelled
@@ -970,7 +1067,7 @@ SLP.derive = (() => {
   }
 
   return { studentState, chartedCount, objectivesCharted, series, mastery, pair, minutesOf,
-           makeupBalance, attendancePct, schools, canonicalSchool };
+           makeupBalance, attendancePct, attendanceGrid, schools, canonicalSchool };
 })();
 
 // ============================================================

@@ -839,6 +839,40 @@ SLP.derive = (() => {
     return { debt, credit, owed: Math.max(0, debt - credit) };
   }
 
+  // The child's number, and it goes home to a parent — which is why `missed` and
+  // `cancelled` are absent from both lines. Neither was an opportunity the child
+  // declined, and leaving them in would put her own paperwork and a district snow
+  // day onto a child's attendance record. Her misses do not vanish; they are the
+  // debt above, reported separately.
+  //
+  // `isMakeup` does not appear here at all. A makeup is simply a session that was
+  // offered: held, it lands in both lines; no-showed, in `offered` alone. So the
+  // figure can never exceed 100%.
+  //
+  // held/offered are MINUTES — that is what the percentage divides, and it stays
+  // honest for a student carrying two session lengths. The session counts travel
+  // alongside because "8 of 9" is what she writes in the note; they are a label,
+  // never the divisor.
+  function attendancePct(rows, { today } = {}) {
+    let heldMinutes = 0, offeredMinutes = 0;
+    let heldSessions = 0, offeredSessions = 0, uncharted = 0;
+    for (const r of rows || []) {
+      // A range running to the end of the quarter holds sessions that have not
+      // happened. Counting them would accuse her of being behind on paperwork
+      // until the quarter's final day.
+      if (today && r.date > today) continue;
+      if (!r.status) { uncharted++; continue; }
+      if (r.status !== 'present' && r.status !== 'absent') continue;
+      offeredMinutes += r.minutes || 0;
+      offeredSessions++;
+      if (r.status === 'present') { heldMinutes += r.minutes || 0; heldSessions++; }
+    }
+    // Nothing offered is not zero percent — that reads as a child who never came.
+    const pct = offeredMinutes > 0
+      ? Math.round((heldMinutes / offeredMinutes) * 100) : null;
+    return { pct, heldMinutes, offeredMinutes, heldSessions, offeredSessions, uncharted };
+  }
+
   function studentState(entry, studentId) {
     const a = entry.attendance[studentId];
     if (a && a.status && a.status !== 'present') return a.status;   // absent / missed / cancelled
@@ -936,7 +970,7 @@ SLP.derive = (() => {
   }
 
   return { studentState, chartedCount, objectivesCharted, series, mastery, pair, minutesOf,
-           makeupBalance, schools, canonicalSchool };
+           makeupBalance, attendancePct, schools, canonicalSchool };
 })();
 
 // ============================================================

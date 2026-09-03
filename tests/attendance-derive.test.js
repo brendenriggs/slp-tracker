@@ -105,3 +105,77 @@ test('debt is measured in minutes, not sessions', async () => {
   eq(w.SLP.derive.makeupBalance([attMiss(45), attMiss(20)]).owed, 65,
      'two misses of different lengths owe what they were worth');
 });
+
+const ATT_TODAY = '2026-10-31';
+const attRow = (date, status, minutes, isMakeup = false) => ({ date, status, minutes, isMakeup });
+const attPct = (w, rows) => w.SLP.derive.attendancePct(rows, { today: ATT_TODAY });
+
+test('a session she missed stays out of the denominator', async () => {
+  const w = await loadApp();
+  const p = attPct(w, [attRow('2026-10-05', 'present', 30),
+                       attRow('2026-10-12', 'missed', 30)]);
+  eq(p.pct, 100, 'her own paperwork must not land on a child’s progress note');
+  eq(p.offeredSessions, 1, 'only one session was ever offered to the child');
+});
+
+test('a district cancellation stays out of the denominator', async () => {
+  const w = await loadApp();
+  const p = attPct(w, [attRow('2026-10-05', 'present', 30),
+                       attRow('2026-10-12', 'cancelled', 30)]);
+  eq(p.pct, 100, 'a snow day is not an opportunity the child declined');
+});
+
+test('an absence counts against the child, as it should', async () => {
+  const w = await loadApp();
+  const p = attPct(w, [attRow('2026-10-05', 'present', 30),
+                       attRow('2026-10-12', 'absent', 30)]);
+  eq(p.pct, 50, 'offered twice, present once');
+});
+
+test('a held makeup lands in both lines, so the figure can never exceed 100%', async () => {
+  const w = await loadApp();
+  // Missed once, made it up. 8 offered of 10 — not 7 of 9.
+  const p = attPct(w, [attRow('2026-10-05', 'absent', 30),
+                       attRow('2026-10-12', 'missed', 30),
+                       attRow('2026-10-14', 'present', 30, true),
+                       attRow('2026-10-19', 'present', 30)]);
+  eq(p, { pct: 67, heldMinutes: 60, offeredMinutes: 90,
+          heldSessions: 2, offeredSessions: 3, uncharted: 0 },
+     'the makeup is simply a session that was offered');
+  assert(p.pct <= 100, 'and it can never push the number past 100');
+});
+
+test('a session that has not happened yet is neither offered nor uncharted', async () => {
+  const w = await loadApp();
+  const p = attPct(w, [attRow('2026-10-05', 'present', 30),
+                       attRow('2026-11-09', null, 30)]);
+  eq(p.uncharted, 0,
+     'a quarter in progress must not accuse her of being behind on paperwork');
+  eq(p.offeredSessions, 1, 'and the future session is not in the denominator either');
+});
+
+test('uncharted sessions are excluded from the number and counted beside it', async () => {
+  const w = await loadApp();
+  const p = attPct(w, [attRow('2026-10-05', 'present', 30),
+                       attRow('2026-10-12', null, 30),
+                       attRow('2026-10-19', null, 30)]);
+  eq(p.pct, 100, 'nothing was entered, so nothing is claimed');
+  eq(p.uncharted, 2, 'but a confident 100% out of one session must say so out loud');
+});
+
+test('minutes, not session count, decide the percentage', async () => {
+  const w = await loadApp();
+  // One 30-minute session held, one 60-minute session missed by the child.
+  // By session count this is 50%. By minutes it is 33%.
+  const p = attPct(w, [attRow('2026-10-05', 'present', 30),
+                       attRow('2026-10-12', 'absent', 60)]);
+  eq(p.pct, 33, 'the honest figure when a student carries two session lengths');
+  eq([p.heldSessions, p.offeredSessions], [1, 2],
+     'the counts still travel, because "1 of 2" is what she writes in the note');
+});
+
+test('a student with nothing offered reads as a dash, not zero', async () => {
+  const w = await loadApp();
+  eq(attPct(w, []).pct, null, 'not 0%, which reads as a child who never came');
+  eq(attPct(w, [attRow('2026-10-05', 'cancelled', 30)]).pct, null, 'and not NaN');
+});

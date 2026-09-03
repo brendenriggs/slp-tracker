@@ -18,22 +18,11 @@ Her note, verbatim:
 >
 > I can't go and fix that without deleting the session and then have to retype the notes
 
-**Confirmed in the code, 2026-09-02.** `index.html:1322–1336` renders each slot card with
-its time as plain text (`h('div', { class: 'slot-time', text: ... })`) and exactly one
-control: **Delete**. There is no edit path for `startTime`/`endTime`, on the slot or
-anywhere else. `slotForm` (`index.html:1304`) only ever creates.
+Nothing above has been investigated, and that is deliberate — the note is recorded here
+exactly as it arrived so that whoever picks it up starts from her words rather than from
+someone else's reading of them.
 
-Two things worth noticing before anyone designs a fix, because they are not the same
-problem and she has run into both at once:
-
-1. **The slot has no editor.** That is the literal request.
-2. **Her charted work does not survive the workaround.** `deleteSlot` toasts *"Sessions
-   already charted are untouched"*, yet she reports retyping her notes. Either the toast
-   overpromises or the recovery path is not discoverable. **Find out which before
-   designing anything** — if it is the second, an edit button alone will not have fixed
-   what actually hurt her.
-
-Then process it the way the last two of her requests were processed, which worked:
+Process it the way the last two of her requests were processed, which worked:
 
 1. `superpowers:brainstorming` — her requests have needed real clarification every time.
    Requirements moved four times during the original design, and the attendance spec had

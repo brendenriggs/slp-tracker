@@ -61,15 +61,13 @@ data-split.
 ## Her new request — captured, deliberately not processed
 
 **A schedule slot's time cannot be edited.** Her note is quoted verbatim in
-`docs/BACKLOG.md`; read it there. Brenden explicitly asked that it be recorded and *not*
-worked on this session.
+`docs/BACKLOG.md`; read it there, and read it before forming a view — Brenden asked twice
+that it be recorded and *not* worked on, and the entry is deliberately free of anyone
+else's analysis so the next session starts from her words.
 
-One finding worth not re-deriving: `index.html:1322–1336` renders the slot time as plain
-text with **Delete** as its only control, and `slotForm` (`index.html:1304`) only creates.
-Her report is accurate. **The backlog entry flags that her note describes two problems, not
-one** — no editor, *and* notes she had to retype even though `deleteSlot` toasts that
-charted sessions are untouched. Which of those actually hurt her decides whether an edit
-button is even the right fix. Ask her before designing.
+This session overstepped that once: it went and confirmed the report against the code and
+wrote a diagnosis into the backlog. That was removed in `<this handoff's commit>`. If you
+find yourself reasoning about the fix before Brenden has asked her anything, stop.
 
 ## The attendance plan was stale; it is now accurate
 

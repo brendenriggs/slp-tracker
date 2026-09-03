@@ -1,28 +1,57 @@
 # Delivering the tracker
 
-The deliverable is one file: `slp-tracker.html`. Send it; she double-clicks it. Nothing
-to install, no internet needed.
+The app lives at **https://brendenriggs.github.io/slp-tracker/**. She bookmarks it once.
 
 ## Updating her copy
 
-Send the new file. **Her data is not affected** — Chrome keys `file://` storage to the
-shared `file://` origin, not to the file path (verified 2026-08-25, see
-`docs/superpowers/specs/2026-08-25-storage-probe-result.md`). She can save the new copy
-anywhere, even over the old one.
+`git push` to `main`. GitHub Pages rebuilds within a minute or two, and its CDN caches
+HTML for about ten minutes, so a refresh shortly after the push gets her the new version.
+Nothing to send, nothing for her to save.
 
-The first time she takes an update, have her confirm her sessions are still there before
-deleting the old file. That check costs a glance and closes the only remaining doubt.
+To confirm she actually has an update, ask her to read the version in the bottom-right
+corner of the page. If it is stale, a hard refresh (Ctrl+Shift+R) settles it.
+
+## The one-time move from the emailed file
+
+Her data lives in the browser, keyed to the origin it was created under. The old copy ran
+on `file://`; the hosted app runs on `https://brendenriggs.github.io`. **These are
+different origins, and IndexedDB does not cross between them.** Her linked backup file
+handle does not cross either. So the switch is a migration, not a bookmark change:
+
+1. Open the **old** `slp-tracker.html` file. Press **Back up now**. Confirm the JSON file
+   is on disk and is not zero bytes.
+2. Open https://brendenriggs.github.io/slp-tracker/. **It will be empty.** Tell her this
+   before she sees it, or she will think a year of sessions is gone.
+3. **Restore** from the backup file written in step 1.
+4. Spot-check: a few students, a recent week of sessions.
+5. **Link a backup file** again — the hosted app has no memory of the old one. Point it
+   at the same Google Drive for Desktop folder.
+6. Only now delete the old HTML file, so there is no second copy collecting sessions that
+   the hosted app will never see.
+
+Step 6 is the one that matters most. Two working copies on two origins, both accepting
+entries, is the failure this migration can leave behind.
 
 ## What she must know
 
-1. **Chrome can clear this data.** `persist()` was denied on her laptop, so "Clear
+1. **It needs internet now.** The old file opened on a plane; this does not. There is no
+   offline cache, deliberately — a stale service worker is the most common reason a hosted
+   app stops showing updates, which is the whole point of hosting it.
+2. **Chrome can still clear this data.** `persist()` was denied on her laptop, so "Clear
    browsing data" wipes it. Press **Back up now** regularly — the app nags after 3 days.
-2. **Link a backup file once**, ideally inside her Google Drive for Desktop folder. After
+   Hosting changed nothing about this.
+3. **Link a backup file once**, ideally inside her Google Drive for Desktop folder. After
    that, Back up now writes straight to it with no dialog, and Drive carries it off the
    laptop on its own.
-3. **Restore** reads a backup file back. It replaces everything; it does not merge.
+4. **Restore** reads a backup file back. It replaces everything; it does not merge.
+
+## Why the repo is public
+
+GitHub Pages is free only for public repos. The repo holds app code and design docs — no
+student data, no names, no district. `.gitignore` keeps backups (`slp-data-*.json`,
+`*-backup.json`, `data/`) out, and test fixtures are invented. Keep it that way.
 
 ## Not built (deliberately)
 
-School-year rollover, makeup-session linking, multi-user or sync, and Phase 2 (curriculum
-and lesson planning). See spec §7.
+School-year rollover, makeup-session linking, multi-user or sync, offline caching, and
+Phase 2 (curriculum and lesson planning). See spec §7.

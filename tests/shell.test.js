@@ -184,3 +184,18 @@ test('a long school name does not push the filter out of its column', async () =
   assert(box.right <= container.right + 1,
          'overflows its container by ' + (box.right - container.right) + 'px');
 });
+
+test('the footer stamps the version she reads back over the phone', async () => {
+  const w = await loadApp();
+  const stamp = w.document.querySelector('.app-version');
+  assert(stamp, 'the version stamp renders');
+  eq(stamp.textContent, 'v' + w.SLP.version, 'and shows the running version');
+});
+
+test('the version stamp survives a tab switch', async () => {
+  const w = await loadApp();
+  w.document.querySelector('.tab[data-tab="students"]').click();
+  await w.SLP.ui.render();
+  eq(w.document.querySelectorAll('.app-version').length, 1,
+     'exactly one stamp, re-rendered rather than accumulated');
+});

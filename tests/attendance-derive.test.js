@@ -288,6 +288,59 @@ test('a makeup lands on a day that is not that student’s scheduled day', async
   eq(cells[0].isMakeup, true, 'and it must never read as a routine session');
 });
 
+// The columns and the arithmetic must be the same set of sessions. They were two
+// independent filters — `dates` from eachDate, the cell loop from a raw from..to
+// comparison — and they came apart in two ways she can reach with one keystroke.
+test('a cleared start date draws no columns and claims no percentage', async () => {
+  const w = await loadApp();
+  const m = w.SLP.model;
+  const ada = m.student({ name: 'Ada' });
+  const held = m.session({ date: '2026-10-05', startTime: '09:00', endTime: '09:30',
+                           roster: [ada.id] });
+  // `<input type="date">` fires change with value '' when she clears it, and every
+  // date string compares >= ''. The raw filter therefore matched her entire history.
+  const g = w.SLP.derive.attendanceGrid(attGridData(w, {
+    from: '', to: '2026-10-31', students: [ada], sessions: [held],
+    attendance: [m.attendance({ sessionId: held.id, studentId: ada.id, status: 'present' })] }));
+  eq(g.dates, [], 'no range, no columns');
+  eq(g.rows[0].cells, {}, 'and no cells behind them');
+  eq(g.rows[0].pct.pct, null,
+     'a confident 100% under two date inputs showing something else is the whole defect');
+});
+
+test('the arithmetic never sees a session outside the drawn columns', async () => {
+  const w = await loadApp();
+  const m = w.SLP.model;
+  const ada = m.student({ name: 'Ada' });
+  const held = m.session({ date: '2026-10-05', startTime: '09:00', endTime: '09:30',
+                           roster: [ada.id] });
+  // 2016 for 2026 is one keystroke. eachDate stops at its 400-day cap, so the columns
+  // run out in 2017 and this session is nowhere on the page.
+  const g = w.SLP.derive.attendanceGrid(attGridData(w, {
+    from: '2016-10-01', to: '2026-10-31', students: [ada], sessions: [held],
+    attendance: [m.attendance({ sessionId: held.id, studentId: ada.id, status: 'present' })] }));
+  eq(g.dates.includes('2026-10-05'), false, 'the cap truncated the columns long before it');
+  eq(g.rows[0].cells['2026-10-05'], undefined, 'so the session is not on the page');
+  eq(g.rows[0].pct.pct, null,
+     'and a number computed over a decade beside four hundred empty columns is not a number');
+});
+
+test('a booked Saturday makeup keeps its column and still counts', async () => {
+  const w = await loadApp();
+  const m = w.SLP.model;
+  const ada = m.student({ name: 'Ada' });
+  const sat = m.session({ date: '2026-10-10', startTime: '10:00', endTime: '10:30',
+                          roster: [ada.id] });
+  const g = w.SLP.derive.attendanceGrid(attGridData(w, {
+    from: '2026-10-05', to: '2026-10-11', students: [ada], sessions: [sat],
+    attendance: [m.attendance({ sessionId: sat.id, studentId: ada.id,
+                                status: 'present', isMakeup: true })] }));
+  assert(g.dates.includes('2026-10-10'), 'a weekday-only filter must not lose it');
+  eq(g.rows[0].cells['2026-10-10'].length, 1, 'and it is drawn');
+  eq(g.rows[0].pct.pct, 100,
+     'binding the arithmetic to the drawn columns must not drop the session it draws');
+});
+
 test('a student with no slots at all still gets a row', async () => {
   const w = await loadApp();
   const ada = w.SLP.model.student({ name: 'Ada' });

@@ -1114,6 +1114,18 @@ SLP.derive = (() => {
     const dates = eachDate(from, to)
       .filter(ds => !WEEKEND.has(dowOf(ds)) || hasSession.has(ds));
 
+    // The columns are the truth. `inRange` above is what the *dates* are built from, so
+    // it has to stay — but the arithmetic reads `drawn`, the sessions that actually got a
+    // column, because the two filters otherwise agree only by accident and come apart on
+    // one keystroke: a cleared date input makes `from` '', and every date string compares
+    // `>= ''`, so `inRange` becomes the student's whole history under two date inputs
+    // showing something else; a year mistyped as 2016 spans a decade beside the 400
+    // columns eachDate's cap silently allows. Deriving one from the other makes a
+    // percentage over sessions she cannot see impossible by construction, rather than
+    // adding a second guard that can drift out of step the way these two did.
+    const onGrid = new Set(dates);
+    const drawn = inRange.filter(s => onGrid.has(s.date));
+
     const rowsBySession = {};
     for (const a of attendance) {
       (rowsBySession[a.sessionId] || (rowsBySession[a.sessionId] = {}))[a.studentId] = a;
@@ -1121,13 +1133,13 @@ SLP.derive = (() => {
 
     // A materialized session outranks the slot it came from: its roster and times are
     // the snapshot of what actually happened, and the slot may have been edited since.
-    const spokenFor = new Set(inRange.filter(s => s.slotId).map(s => s.date + '|' + s.slotId));
+    const spokenFor = new Set(drawn.filter(s => s.slotId).map(s => s.date + '|' + s.slotId));
 
     const rows = students.map(student => {
       const cells = {};
       const push = (date, cell) => (cells[date] || (cells[date] = [])).push(cell);
 
-      for (const session of inRange) {
+      for (const session of drawn) {
         if (!(session.roster || []).includes(student.id)) continue;
         const row = (rowsBySession[session.id] || {})[student.id] || null;
         push(session.date, {

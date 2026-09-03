@@ -11,11 +11,17 @@ test('the status vocabulary is exactly the four outcomes', async () => {
      'one field carries the outcome, and these are its values');
 });
 
+// Asserts the function exists before asserting it throws: otherwise a missing
+// model.attendance throws a TypeError and the test passes green having proved
+// nothing. See tests/backup.test.js:152-168 for the same convention.
 test('an unknown attendance status is refused at construction', async () => {
   const w = await loadApp();
-  await throws(() => w.SLP.model.attendance({
+  assert(typeof w.SLP.model.attendance === 'function', 'model.attendance exists');
+  const e = await throws(() => w.SLP.model.attendance({
     sessionId: 'se1', studentId: 's1', status: 'excused',
   }), 'a status outside the vocabulary must not reach the database');
+  assert(/excused/.test(e.message),
+         'named for the bad status, not for a missing function — got: ' + e.message);
 });
 
 test('a null status is legal — a makeup booked but not yet held', async () => {

@@ -21,12 +21,18 @@ async function attSeed(w) {
   return { ada, bo, slot, objective };
 }
 
+// Asserts the function exists before asserting it throws: otherwise a missing
+// setAttendance/setSessionAttendance throws a TypeError and the test passes
+// green having proved nothing. See tests/backup.test.js:152-168.
 test('setAttendance refuses a status outside the vocabulary', async () => {
   const w = await loadApp();
   const { ada, slot } = await attSeed(w);
-  await throws(() => w.SLP.store.setAttendance({
+  assert(typeof w.SLP.store.setAttendance === 'function', 'setAttendance exists');
+  const e = await throws(() => w.SLP.store.setAttendance({
     dateStr: ATT_MONDAY, slot, studentId: ada.id, status: 'excused',
   }), 'the write path is the last gate before the database');
+  assert(/excused/.test(e.message),
+         'named for the bad status, not for a missing function — got: ' + e.message);
 });
 
 test('setAttendance accepts each of the four outcomes', async () => {
@@ -209,8 +215,36 @@ test('a session-wide sweep does not overwrite a mark she made by hand', async ()
 test('a bulk sweep is refused an unknown status too', async () => {
   const w = await loadApp();
   const { slot } = await attSeed(w);
-  await throws(() => w.SLP.store.setSessionAttendance({
+  assert(typeof w.SLP.store.setSessionAttendance === 'function', 'setSessionAttendance exists');
+  const e = await throws(() => w.SLP.store.setSessionAttendance({
     dateStr: ATT_MONDAY, slot, status: 'snowday' }), 'same gate as the single write');
+  assert(/snowday/.test(e.message),
+         'named for the bad status, not for a missing function — got: ' + e.message);
+});
+
+// The roster member with no prior row gets validated for free, on the create path
+// through m.attendance(). A member who already has a row does not pass through
+// m.attendance() at all — `row = prior` — so a bad status reaching that branch
+// would be written straight to the database with no check. This pins the guard
+// at the top of setSessionAttendance that catches it before either branch runs,
+// and pins that a rejected sweep leaves an existing row untouched rather than
+// corrupting it on the way to the throw.
+test('a rejected bulk sweep does not touch a row it already held', async () => {
+  const w = await loadApp();
+  const { ada, slot } = await attSeed(w);
+  await w.SLP.store.setAttendance({ dateStr: ATT_MONDAY, slot,
+                                    studentId: ada.id, status: 'present' });
+
+  assert(typeof w.SLP.store.setSessionAttendance === 'function', 'setSessionAttendance exists');
+  const e = await throws(() => w.SLP.store.setSessionAttendance({
+    dateStr: ATT_MONDAY, slot, status: 'snowday' }), 'a bad sweep must still be refused');
+  assert(/snowday/.test(e.message),
+         'named for the bad status, not for a missing function — got: ' + e.message);
+
+  const session = await w.SLP.store.ensureSession(ATT_MONDAY, slot);
+  const rows = await w.SLP.db.getAllBy('attendance', 'sessionId', session.id);
+  const adaRow = rows.find(r => r.studentId === ada.id);
+  eq(adaRow.status, 'present', 'a rejected sweep must not write before it throws');
 });
 
 test('a session-wide mark creates no debt for a child who was absent', async () => {

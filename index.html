@@ -821,6 +821,24 @@ SLP.derive = (() => {
     return Math.max(0, b - a);
   }
 
+  // Her number, not the child's. Two rules, and one of them is load-bearing:
+  //
+  // The `!r.isMakeup` on the debt line stops a missed makeup adding a SECOND helping
+  // of debt for the one obligation it was booked to settle — she would owe 60 minutes
+  // for a single skipped session, and the figure would drift upward every time a
+  // makeup slipped. A missed makeup is correctly a no-op: the original debt stands.
+  //
+  // `owed` clamps at zero because over-delivering is not a bank balance. Giving a
+  // child an extra 30 minutes does not entitle her to skip 30 later.
+  function makeupBalance(rows) {
+    let debt = 0, credit = 0;
+    for (const r of rows || []) {
+      if (r.status === 'missed' && !r.isMakeup) debt += r.minutes || 0;
+      if (r.status === 'present' && r.isMakeup) credit += r.minutes || 0;
+    }
+    return { debt, credit, owed: Math.max(0, debt - credit) };
+  }
+
   function studentState(entry, studentId) {
     const a = entry.attendance[studentId];
     if (a && a.status && a.status !== 'present') return a.status;   // absent / missed / cancelled
@@ -918,7 +936,7 @@ SLP.derive = (() => {
   }
 
   return { studentState, chartedCount, objectivesCharted, series, mastery, pair, minutesOf,
-           schools, canonicalSchool };
+           makeupBalance, schools, canonicalSchool };
 })();
 
 // ============================================================

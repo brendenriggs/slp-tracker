@@ -58,3 +58,50 @@ test('a null-status row does not read as a state on Today', async () => {
   eq(w.SLP.derive.studentState(entry, 's1'), 'none',
      'booked-but-unmarked is not charted yet — it must not leak a null onto the card');
 });
+
+const attMiss = (minutes, isMakeup = false) => ({ status: 'missed', isMakeup, minutes });
+const attHeld = (minutes, isMakeup = false) => ({ status: 'present', isMakeup, minutes });
+
+test('a session she missed owes its minutes', async () => {
+  const w = await loadApp();
+  eq(w.SLP.derive.makeupBalance([attMiss(30)]),
+     { debt: 30, credit: 0, owed: 30 }, 'the debt is hers');
+});
+
+test('a held makeup pays the debt down', async () => {
+  const w = await loadApp();
+  eq(w.SLP.derive.makeupBalance([attMiss(30), attHeld(30, true)]),
+     { debt: 30, credit: 30, owed: 0 }, 'settled');
+});
+
+test('over-delivering is not a balance she can draw down', async () => {
+  const w = await loadApp();
+  const b = w.SLP.derive.makeupBalance([attMiss(30), attHeld(60, true)]);
+  eq(b.owed, 0, 'never a positive credit — she cannot bank 30 minutes against next month');
+});
+
+test('missing a makeup adds no second helping of debt', async () => {
+  const w = await loadApp();
+  // She missed a 30-minute session, booked a makeup for it, then missed the makeup.
+  // One skipped obligation. If the makeup counted, she would owe 60 for one miss —
+  // and the number would drift upward every time a makeup slipped.
+  const b = w.SLP.derive.makeupBalance([attMiss(30), attMiss(30, true)]);
+  eq(b, { debt: 30, credit: 0, owed: 30 }, 'the original debt simply stays outstanding');
+});
+
+test('nothing but her own misses creates debt', async () => {
+  const w = await loadApp();
+  const b = w.SLP.derive.makeupBalance([
+    { status: 'absent', isMakeup: false, minutes: 30 },
+    { status: 'cancelled', isMakeup: false, minutes: 30 },
+    attHeld(30),
+  ]);
+  eq(b, { debt: 0, credit: 0, owed: 0 },
+     'a child who stayed home and a district snow day are not her paperwork');
+});
+
+test('debt is measured in minutes, not sessions', async () => {
+  const w = await loadApp();
+  eq(w.SLP.derive.makeupBalance([attMiss(45), attMiss(20)]).owed, 65,
+     'two misses of different lengths owe what they were worth');
+});

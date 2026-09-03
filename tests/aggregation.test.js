@@ -132,3 +132,83 @@ test('a single data point still renders', async () => {
   eq(w.document.querySelectorAll('.objective-chart[data-objective-id="' + obj.id +
      '"] .chart-point').length, 1, 'one point, no divide-by-zero on the x scale');
 });
+
+// The chart tests above assert counts and data- attributes only, never geometry, so the
+// suite stayed green while a point above criterion was drawn off the top of the SVG and
+// clipped away. These four are the geometry the rest of the file does not look at — a
+// wrong fix that keeps the ceiling at 100 passes every other test in this file.
+// See docs/adr/0003-objective-charts-scale-past-criterion.md.
+async function chartSeedAbove(w, raws) {
+  const m = w.SLP.model, st = w.SLP.store;
+  const ada = m.student({ name: 'Ada' });
+  await st.saveStudent(ada);
+  const goal = m.goal({ studentId: ada.id, text: 'g' });
+  await st.saveGoal(goal);
+  const obj = m.objective({ goalId: goal.id, text: 'o' });
+  await st.saveObjective(obj);
+  const slot = m.slot({ dayOfWeek: 1, startTime: '09:00', endTime: '09:30',
+                        studentIds: [ada.id] });
+  await st.saveSlot(slot);
+  const achieved = obj.fields.find(f => f.role === 'achieved').id;
+  // The target field defaults to 4, so 5 trials is 125% — a real session, not a freak
+  // value: exceeding criterion is what a child does on their best day.
+  const days = ['2026-09-07', '2026-09-14', '2026-09-21'];
+  for (let i = 0; i < raws.length; i++) {
+    await st.recordValue({ dateStr: days[i], slot, studentId: ada.id, objectiveId: obj.id,
+                           fieldId: achieved, raw: raws[i] });
+  }
+  await w.SLP.ui.go({ tab: 'students', studentId: ada.id });
+  return w.document.querySelector('.objective-chart[data-objective-id="' + obj.id + '"] svg');
+}
+
+test('a score above criterion is drawn inside the chart, not clipped off the top', async () => {
+  const w = await loadApp();
+  const svg = await chartSeedAbove(w, ['2', '4', '5']);
+  const box = svg.getAttribute('viewBox').split(' ').map(Number);
+  const height = box[3];
+  const pts = Array.from(svg.querySelectorAll('.chart-point'));
+  eq(pts.map(p => p.dataset.value), ['50', '100', '125'], 'her best session is the 125%');
+  for (const p of pts) {
+    const cy = Number(p.getAttribute('cy'));
+    assert(cy >= 0 && cy <= height,
+       'every point sits within the drawing area — got cy ' + cy + ' against height ' + height);
+  }
+});
+
+test('the best session is the highest point on the chart', async () => {
+  const w = await loadApp();
+  const svg = await chartSeedAbove(w, ['2', '4', '5']);
+  const pts = Array.from(svg.querySelectorAll('.chart-point'));
+  const cy = pts.map(p => Number(p.getAttribute('cy')));
+  // A clipped point can still be "highest" by being most negative, so the check above
+  // does the bounds work and this one does the ordering. y grows downward.
+  assert(cy[2] < cy[1] && cy[1] < cy[0],
+     'higher percentage, higher on the page — got ' + cy.join(', '));
+});
+
+test('the top tick reads the real ceiling, not a fixed 100%', async () => {
+  const w = await loadApp();
+  const svg = await chartSeedAbove(w, ['2', '4', '5']);
+  const ticks = Array.from(svg.querySelectorAll('.chart-tick')).map(t => t.textContent);
+  assert(ticks.includes('125%'),
+     'an axis labelled 100% while a point sits above it is a lie — got ' + ticks.join(', '));
+});
+
+test('the criterion line stays at 100% once the ceiling rises above it', async () => {
+  const w = await loadApp();
+  const svg = await chartSeedAbove(w, ['2', '4', '5']);
+  const line = svg.querySelector('.chart-criterion');
+  assert(line, 'the ceiling no longer means "met the goal", so the line has to say it');
+  const at100 = svg.querySelector('.chart-point[data-value="100"]');
+  eq(Math.round(Number(line.getAttribute('y1'))),
+     Math.round(Number(at100.getAttribute('cy'))),
+     'and it is drawn at the height a 100% session plots at');
+});
+
+test('a chart that never exceeds criterion still tops out at 100%', async () => {
+  const w = await loadApp();
+  const svg = await chartSeedAbove(w, ['2', '3', '4']);
+  const ticks = Array.from(svg.querySelectorAll('.chart-tick')).map(t => t.textContent);
+  assert(ticks.includes('100%'),
+     'the ceiling rises to fit the data, it does not shrink to it — got ' + ticks.join(', '));
+});

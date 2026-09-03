@@ -172,6 +172,9 @@
   .chart-point { fill: var(--accent); }
   .chart-axis { stroke: var(--line); stroke-width: 1; }
   .chart-tick { fill: var(--muted); font-size: 10px; }
+  /* The 100% goal line. It used to be the top edge of the chart; now that the ceiling
+     rises to fit a score above criterion, this is what carries "met the goal". */
+  .chart-criterion { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 3; }
   .mastery { font-size: 13px; color: var(--muted); margin-top: 4px; }
   .mastery.met { color: var(--ok); font-weight: 600; }
 
@@ -2170,7 +2173,13 @@ SLP.ui = (() => {
 
     const isPct = series.kind === 'pct';
     const values = pts.map(p => p.value);
-    const max = isPct ? 100 : Math.max(1, ...values);
+    // Scores genuinely exceed criterion — five trials against a target of four is 125% —
+    // and a fixed 100 ceiling computed a negative y for those, so the SVG clipped them
+    // away entirely. Her best session was the one that disappeared. The ceiling rises to
+    // fit the data instead, and the criterion line below carries "met the goal".
+    // Do not simplify this back to a constant 100: see
+    // docs/adr/0003-objective-charts-scale-past-criterion.md.
+    const max = isPct ? Math.max(100, ...values) : Math.max(1, ...values);
     const min = isPct ? 0 : Math.min(0, ...values);
     const span = (max - min) || 1;
 
@@ -2183,10 +2192,18 @@ SLP.ui = (() => {
                                     x2: PAD_L, y2: H - PAD_B }));
     svg.appendChild(svgEl('line', { class: 'chart-axis', x1: PAD_L, y1: H - PAD_B,
                                     x2: W - PAD_R, y2: H - PAD_B }));
-    for (const [v, label] of [[max, isPct ? '100%' : String(max)], [min, isPct ? '0%' : String(min)]]) {
+    for (const [v, label] of [[max, isPct ? max + '%' : String(max)], [min, isPct ? '0%' : String(min)]]) {
       const t = svgEl('text', { class: 'chart-tick', x: 4, y: y(v) + 3 });
       t.textContent = label;
       svg.appendChild(t);
+    }
+
+    // "At the top means she met the goal" stopped being true the moment the ceiling
+    // could move, so the goal gets its own fixed line. It is the one thing on this
+    // chart that does not shift between two viewings of the same objective.
+    if (isPct) {
+      svg.appendChild(svgEl('line', { class: 'chart-criterion', x1: PAD_L, y1: y(100),
+                                      x2: W - PAD_R, y2: y(100) }));
     }
 
     if (pts.length > 1) {

@@ -89,3 +89,35 @@ about her timetable.
 Nothing depends on it yet.
 
 **Assumed meanwhile:** nothing. Stage 2 is not being built.
+
+---
+
+## 6. Over a whole quarter, should the grid show sessions from before a child was in that group?
+
+> The attendance grid fills in every weekday from your current weekly schedule. So if a
+> child joined your Monday group in November and you pull up September to December, every
+> Monday back to September shows as a session that was scheduled and never written up. The
+> same happens if you moved a group from Tuesdays to Thursdays partway through the year.
+> Are those sessions you want to see as "not charted yet", or should the grid start each
+> child where they actually started?
+
+**Why it matters:** the published percentage is the same either way — uncharted sessions are
+out of both lines of it. What changes is the *provisional* flag: the number is set in italics
+with "· N uncharted" beside it whenever anything in the range is unwritten. At month scale
+that flags the transcription she is genuinely behind on. At quarter scale the backwards
+projection fires it on nearly every student, and a flag that applies to everyone stops
+discriminating.
+
+Two readings:
+
+- **Bound the projection by when the child joined the slot.** Weekdays before that draw as
+  "not scheduled" dots instead of empty boxes, the uncharted counts fall, and a student who
+  joined in November shows a plain number over a Q1 range rather than an italic one.
+- **Accept it, and read `uncharted` as "not charted, whenever it was scheduled".** The screen
+  is unchanged: at quarter scale most students carry italics and a large uncharted count, and
+  telling "behind on paperwork" apart from "was not in this group yet" would need something
+  the grid does not currently show.
+
+**Assumed meanwhile:** the current behaviour — the weekly schedule is projected across the
+whole range, and every unwritten weekday in it counts as uncharted. Not being designed
+either way until she answers.

@@ -205,6 +205,50 @@
   .confirm-actions { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
   #backup-nag { background: #fffaf0; border: 1px solid var(--warn); color: var(--warn);
                 border-radius: 6px; padding: 7px 11px; margin-bottom: 10px; font-size: 13px; }
+
+  /* --- the attendance grid --- */
+  /* The table is the only horizontally scrolling thing on the page: #app is capped
+     at 1100px and a quarter is sixty columns wide. The document keeps scrolling
+     vertically, which is what the scroll-position fix in doRender() depends on. */
+  .att-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+  .att-grid { border-collapse: separate; border-spacing: 0; font-size: 13px; }
+  .att-grid th, .att-grid td {
+    padding: 3px 5px; text-align: center; white-space: nowrap;
+    border-bottom: 1px solid var(--line); background: var(--bg);
+  }
+  .att-grid thead th { font-weight: 600; color: var(--muted); font-size: 11px; }
+  .att-grid tbody tr:nth-child(even) th,
+  .att-grid tbody tr:nth-child(even) td { background: var(--row); }
+  /* Sticky in three places: her name on the left, and the two answers on the right.
+     Set to a quarter she does not scroll at all — these columns are the whole point. */
+  .att-grid .att-name { position: sticky; left: 0; z-index: 2; text-align: left;
+                        min-width: 130px; font-weight: 400; }
+  /* 150px does not fit "78% · 7 of 9 · 3 uncharted" at 13px, and this column is
+     nowrap and sticky, so the overflow lands under the Owed column rather than
+     wrapping. Sized to the longest real string; confirm it in the screenshot pass. */
+  .att-grid .att-pct  { position: sticky; right: 96px; z-index: 2; text-align: right;
+                        min-width: 210px; border-left: 1px solid var(--line); }
+  .att-grid .att-owed { position: sticky; right: 0; z-index: 2; text-align: right;
+                        min-width: 96px; }
+  .att-grid thead .att-name, .att-grid thead .att-pct, .att-grid thead .att-owed { z-index: 3; }
+  /* A percentage computed over an incomplete quarter is provisional (spec:174-175).
+     The uncharted count says so in words; this says so at a glance. */
+  .att-grid .att-pct-provisional { font-style: italic; color: var(--muted); }
+  /* The month band above the day numbers. Ruled off so the runs read as groups. */
+  .att-grid thead .att-month { border-bottom: 1px solid var(--line);
+                               border-left: 1px solid var(--line);
+                               font-size: 11px; letter-spacing: .3px; }
+  .att-cell { border: 0; background: none; padding: 0 3px; cursor: pointer;
+              font: inherit; line-height: 1.2; color: var(--muted); }
+  .att-cell[data-state="present"]   { color: var(--ok); }
+  .att-cell[data-state="absent"]    { color: var(--danger); }
+  .att-cell[data-state="missed"]    { color: var(--warn); font-weight: 700; }
+  .att-cell[data-state="cancelled"] { color: var(--muted); }
+  .att-cell sup { font-size: 9px; letter-spacing: .5px; }
+  .att-none { color: var(--line); }
+  .att-owed-debt { color: var(--warn); }
+  .att-legend { font-size: 12px; color: var(--muted); margin: 10px 0 0;
+                display: flex; flex-wrap: wrap; gap: 12px; }
 </style>
 </head>
 <body>
@@ -952,6 +996,14 @@ SLP.derive = (() => {
     return out;
   }
 
+  // Her default range. `new Date(y, mo, 0)` is the last day of month `mo` — the
+  // zeroth day of the next one — so February needs no special case.
+  function monthRange(dateStr) {
+    const [y, mo] = String(dateStr).split('-').map(Number);
+    const last = new Date(y, mo, 0).getDate();
+    return { from: y + '-' + pad2(mo) + '-01', to: y + '-' + pad2(mo) + '-' + pad2(last) };
+  }
+
   // Her paper form, with the arithmetic done. Pure: hand it the output of
   // store.attendanceRange and it returns everything on screen — no IndexedDB, no
   // await, so the whole page is testable without the harness opening a database.
@@ -1119,7 +1171,7 @@ SLP.derive = (() => {
   }
 
   return { studentState, chartedCount, objectivesCharted, series, mastery, pair, minutesOf,
-           makeupBalance, attendancePct, attendanceGrid, schools, canonicalSchool };
+           makeupBalance, attendancePct, attendanceGrid, schools, canonicalSchool, monthRange };
 })();
 
 // ============================================================
@@ -1375,6 +1427,7 @@ SLP.ui = (() => {
     ['today', 'Today'],
     ['students', 'Students'],
     ['schedule', 'Schedule'],
+    ['attendance', 'Attendance'],
   ];
 
   // Every render tears #app down to nothing and rebuilds it, and nothing on the page is
@@ -2400,6 +2453,189 @@ SLP.ui = (() => {
 
   SLP.ui.today = { shiftDate, flush, wireValueInput, wireNote, wireAbsent,
                    addStudentControl, removeButton };
+})();
+
+// ============================================================
+// SECTION: ui.attendance — the caseload grid.
+// Her paper clipboard form, with the arithmetic done for her. One store call does
+// all the IO; one pure function produces everything on screen.
+// ============================================================
+(() => {
+  const { h } = SLP.ui;
+
+  // Survives re-render within the tab, like ui.schedule's draft. The range is null
+  // until the first render so it can default to whatever month she opens it in.
+  const ui = { search: '', gradeFilter: '', schoolFilter: '', range: null };
+
+  // Glyph AND colour, never colour alone: her highlighter system does not survive a
+  // colourblind reader or a grayscale print, and these go home in a folder.
+  const GLYPH = { present: '✓', absent: '✗', missed: '–',
+                  cancelled: '∅', unmarked: '▫' };
+  const LABEL = { present: 'held', absent: 'absent', missed: 'I missed it',
+                  cancelled: 'cancelled', unmarked: 'scheduled, unmarked' };
+
+  const dayNum = ds => String(Number(ds.split('-')[2]));
+
+  const MONTH_NAME = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const monthKey = ds => ds.slice(0, 7);
+  const monthLabel = ds => MONTH_NAME[Number(ds.slice(5, 7)) - 1] + ' ' + ds.slice(0, 4);
+
+  // The day row carries day-of-month alone, so a quarter shows "1" three times with
+  // nothing to say which month each belongs to. Group the dates into one band above.
+  function monthBand(dates) {
+    const spans = [];
+    dates.forEach(d => {
+      const k = monthKey(d);
+      const last = spans[spans.length - 1];
+      if (last && last.key === k) last.count++;
+      else spans.push({ key: k, label: monthLabel(d), count: 1 });
+    });
+    return spans;
+  }
+
+  function pctText(p) {
+    if (p.pct === null) return '—';
+    let s = p.pct + '% · ' + p.heldSessions + ' of ' + p.offeredSessions;
+    // Excluding uncharted sessions quietly would let three charted out of thirty
+    // read as a confident 100%. The count travels with the number.
+    if (p.uncharted) s += ' · ' + p.uncharted + ' uncharted';
+    return s;
+  }
+
+  // The spec styles the figure as provisional whenever uncharted is non-zero
+  // (spec:174-175). The count alone is not the flag — the number itself must look
+  // unfinished, because that is what she reads at a glance onto a progress note.
+  const pctProvisional = p => !!(p && p.pct !== null && p.uncharted);
+
+  function cellEl(date, row, cell) {
+    return h('button', {
+      class: 'att-cell', type: 'button',
+      'data-state': cell.state,
+      'data-makeup': cell.isMakeup ? 'true' : 'false',
+      'data-date': date,
+      'data-student-id': row.student.id,
+      'data-session-id': cell.sessionId,
+      'data-slot-id': cell.slotId,
+      'aria-label': row.student.name + ', ' + date + ': ' + LABEL[cell.state] +
+                    (cell.isMakeup ? ' (makeup)' : ''),
+    }, ...makeupGlyph(cell));
+  }
+
+  // Spec glyphs (spec:215): a *held* makeup is the single character `Ⓜ`, and every other
+  // makeup state is its own glyph with a superscript M — so a booked-but-unmarked one
+  // reads `▫ᴹ`. A uniform superscript would make a held makeup indistinguishable from a
+  // held ordinary session at a glance, which is the distinction the column exists for.
+  function makeupGlyph(cell) {
+    const base = GLYPH[cell.state] || '?';
+    if (!cell.isMakeup) return [base];
+    if (cell.state === 'present') return ['Ⓜ'];
+    return [base, h('sup', { text: 'M' })];
+  }
+
+  function legend() {
+    return h('p', { class: 'att-legend', id: 'attendance-legend' },
+      h('span', { text: '✓ held' }),
+      h('span', { text: '✗ absent' }),
+      h('span', { text: '– I missed it' }),
+      h('span', { text: '∅ cancelled' }),
+      h('span', { text: '▫ scheduled, unmarked' }),
+      h('span', { text: '· not scheduled' }),
+      h('span', { text: 'Ⓜ makeup (held)' }),
+      h('span', { text: '▫ᴹ makeup booked, unmarked' }));
+  }
+
+  function gridTable(grid) {
+    // Two header rows. The day row carries day-of-month alone, which repeats across a
+    // quarter ("1" three times); the band above it names the month each run belongs to.
+    const monthRow = h('tr', { id: 'attendance-months' },
+      h('th', { class: 'att-name', scope: 'col' }),
+      monthBand(grid.dates).map(s => h('th', {
+        class: 'att-month', scope: 'colgroup', colspan: String(s.count),
+        'data-month': s.key, text: s.label })),
+      h('th', { class: 'att-pct', scope: 'col' }),
+      h('th', { class: 'att-owed', scope: 'col' }));
+
+    const head = h('tr', {},
+      h('th', { class: 'att-name', scope: 'col', text: 'Student' }),
+      grid.dates.map(d => h('th', { class: 'att-day', scope: 'col',
+                                    'data-date': d, text: dayNum(d) })),
+      h('th', { class: 'att-pct', scope: 'col', text: '%' }),
+      h('th', { class: 'att-owed', scope: 'col', text: 'Owed' }));
+
+    const body = grid.rows.map(row =>
+      h('tr', { 'data-student-id': row.student.id },
+        h('th', { class: 'att-name', scope: 'row', text: row.student.name }),
+        grid.dates.map(d => {
+          const cells = row.cells[d] || [];
+          // Two sessions in one day render as two boxes rather than one merged
+          // verdict — uncommon, but merging would silently hide a miss.
+          return h('td', { class: 'att-day', 'data-date': d },
+            cells.length ? cells.map(c => cellEl(d, row, c))
+                         : h('span', { class: 'att-none', text: '·' }));
+        }),
+        h('td', { class: 'att-pct' + (pctProvisional(row.pct) ? ' att-pct-provisional' : ''),
+                  text: pctText(row.pct) }),
+        h('td', { class: 'att-owed' },
+          row.owed.owed
+            ? h('span', { class: 'att-owed-debt', text: '−' + row.owed.owed + ' min' })
+            : h('span', { text: '—' }))));
+
+    return h('div', { class: 'att-wrap' },
+      h('table', { class: 'att-grid', id: 'attendance-grid' },
+        h('thead', {}, monthRow, head), h('tbody', {}, body)));
+  }
+
+  SLP.ui.views.attendance = async (root) => {
+    // One control, two jobs: left at its default she marks the current month and
+    // scrolls a little; set to a quarter at progress-note time she does not scroll
+    // at all. Her Q1-versus-Q1-plus-Q2 split is two ranges on this one screen.
+    if (!ui.range) ui.range = SLP.derive.monthRange(SLP.ui.todayStr());
+
+    const from = h('input', { type: 'date', id: 'attendance-from', value: ui.range.from });
+    const to = h('input', { type: 'date', id: 'attendance-to', value: ui.range.to });
+    from.addEventListener('change', async () => {
+      ui.range = { from: from.value, to: ui.range.to };
+      await SLP.ui.render();
+    });
+    to.addEventListener('change', async () => {
+      ui.range = { from: ui.range.from, to: to.value };
+      await SLP.ui.render();
+    });
+
+    // She sets the two ends one at a time, so "end before start" is a normal state on
+    // the way from one range to another — the picker stores what she typed and says so,
+    // rather than refusing the keystroke and stranding her half-way. eachDate yields
+    // nothing for an inverted range, so the grid below is empty rather than wrong.
+    const invalidRange = !ui.range.from || !ui.range.to || ui.range.from > ui.range.to;
+    if (invalidRange) SLP.ui.toast('The end date must be after the start.', 'warn');
+
+    const data = await SLP.store.attendanceRange({
+      from: ui.range.from, to: ui.range.to, today: SLP.ui.todayStr() });
+
+    // The filters take the caseload, not the grid rows, so a school with nobody
+    // left in it drops off the list the same way it does on the Students tab.
+    const filters = SLP.ui.studentFilters({
+      idPrefix: 'attendance', state: ui, students: data.students,
+      onChange: () => SLP.ui.render(),
+    });
+    const shown = new Set(filters.shown.map(s => s.id));
+
+    const grid = SLP.derive.attendanceGrid(data);
+    grid.rows = grid.rows.filter(r => shown.has(r.student.id));
+
+    root.appendChild(h('section', { class: 'panel' },
+      h('h2', { text: 'Attendance' }),
+      h('div', { class: 'row-form' }, 'From', from, 'to', to),
+      filters.el,
+      invalidRange
+        ? h('p', { class: 'empty', id: 'attendance-range-error',
+                   text: 'The end date must be after the start.' })
+        : grid.rows.length
+          ? gridTable(grid)
+          : h('p', { class: 'empty', text: 'No students match.' }),
+      legend()));
+  };
 })();
 
 // ============================================================

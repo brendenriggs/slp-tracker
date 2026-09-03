@@ -344,3 +344,11 @@ test('a student pulled from a materialized session gets no cell, not an accusing
      'Bo was never in that session’s roster — the slot fallback must not stand in for ' +
      'it and mark her unmarked for a session she was not scheduled into');
 });
+
+test('the range defaults to the month she is in', async () => {
+  const w = await loadApp();
+  eq(w.SLP.derive.monthRange('2026-10-14'), { from: '2026-10-01', to: '2026-10-31' },
+     'a 31-day month');
+  eq(w.SLP.derive.monthRange('2026-02-03'), { from: '2026-02-01', to: '2026-02-28' },
+     'and February knows its own length');
+});

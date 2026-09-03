@@ -58,11 +58,9 @@ data-split.
   were previously living only in handoff prose. Put future non-spec action items there
   rather than in a handoff, where they rot.
 
-## Her new request — captured, not yet worked
+## Unprocessed feature request
 
-**A schedule slot's time cannot be edited.** Her note is quoted verbatim and unanalyzed in
-`docs/BACKLOG.md`; that entry also carries the process for working it. Start from her
-words.
+A schedule slot's time cannot be edited — `docs/BACKLOG.md`.
 
 ## The attendance plan was stale; it is now accurate
 

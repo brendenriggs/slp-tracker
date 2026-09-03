@@ -7,10 +7,7 @@ into a spec, replace its entry with a link to that spec rather than deleting it.
 
 ## A schedule slot's time cannot be edited
 
-**Raised:** 2026-09-02 by Carol Ann · **Status:** captured, not yet processed —
-no design, no scope, no estimate. Deliberately deferred.
-
-Her note, verbatim:
+**Raised:** 2026-09-02 by Carol Ann · **Status:** unprocessed
 
 > If you put the time in wrong for your schedule, I can't edit it,
 >
@@ -18,23 +15,8 @@ Her note, verbatim:
 >
 > I can't go and fix that without deleting the session and then have to retype the notes
 
-Recorded exactly as it arrived, unanalyzed, so that whoever works it starts from her words
-rather than from someone else's reading of them.
-
-Process it the way the last two of her requests were processed, which worked:
-
-1. `superpowers:brainstorming` — her requests have needed real clarification every time.
-   Requirements moved four times during the original design, and the attendance spec had
-   the reporting period wrong for two sessions running because monthly was *inferred* from
-   the shape of her paper form rather than asked about. Ask.
-2. Classify honestly. The Today-collapse request arrived exactly this way and was correctly
-   handled on the bounded path; the attendance work was architectural and needed a spec.
-3. If it turns out architectural, it takes its own spec in `docs/superpowers/specs/`, and
-   it queues *behind* the attendance work rather than interleaving with it.
-
-**Note for whoever picks this up:** she is actively using the app and her requests arrive
-mid-session. That is normal here and not a reason to drop what is in flight — the
-attendance plan is ten tasks deep and half-finishing it is worse than starting late.
+Start with `superpowers:brainstorming`; ask her before designing. Queues behind the
+attendance plan.
 
 ---
 

@@ -12,17 +12,19 @@
 
 ## Global Constraints
 
-- **`main` is a beta environment, not production — for now.** As of 2026-09-02 the app is
-  hosted at https://brendenriggs.github.io/slp-tracker/, but **Carol Ann has not been given
-  the URL.** She is still on her emailed `file://` copy. So pushing to `main` mid-plan is
-  safe today: nobody is watching. Work straight on `main` and push freely.
+- **This plan runs on a branch.** `git checkout -b attendance-stage-1` before Task 1, and
+  merge to `main` only once Task 10 is done and the suite is green. `main` is served live at
+  https://brendenriggs.github.io/slp-tracker/, and this plan lands ten commits of which nine
+  leave the Attendance tab half-built. Branching is what keeps "is promotion urgent?" from
+  being a judgment an unattended agent has to make mid-plan.
 
-  **What this constrains is promotion, not commits.** The moment she gets that URL, every
-  push to `main` reaches her within about ten minutes, and this plan lands ten commits of
-  which nine leave the Attendance tab half-built. **Do not promote mid-plan.** If promotion
-  becomes urgent before Task 10 is done, branch the unfinished work off `main` first
-  (`git checkout -b attendance-stage-1`) and leave `main` at the last green, coherent
-  state. The promotion procedure is in `docs/DELIVERY.md`.
+  Earlier versions of this plan said to work straight on `main`, on the reasoning that
+  Carol Ann has not been given the URL and nobody is watching. That is still true, and it is
+  no longer the rule: `docs/AUTONOMY.md` is the standing charter and it puts feature work on
+  a branch. Do not revert to committing on `main`.
+
+  **Never promote.** Giving her the URL is Brenden's act alone — see `docs/DELIVERY.md`,
+  and do not send `tmp/note-for-her.md`.
 
 - **Everything lives in `index.html`.** One file, section-commented. New UI goes in a new `SECTION: ui.attendance` block placed between `ui.today` (ends at line 2125) and `ui.aggregation` (whose banner starts at line 2127). No new source files.
 - **`SLP.model` and `SLP.derive` are pure.** No IO, no DOM, no `await` in either. All IndexedDB access lives in `SLP.db` and `SLP.store`.
@@ -34,7 +36,9 @@
 - **Run the suite in the background:** a full pass takes over two minutes. `Bash(..., run_in_background: true)`. If the suite produces *no* TAP output at all, suspect a `ReferenceError` or syntax error in the app file, not a harness hang.
 - **Running the suite wipes the app database** (`tests/index.html:26`). This is accepted and settled — restore from `tmp/slp-test-data.json` through the backup UI. Do not re-raise it.
 - **Stage 2 is out of scope.** No service-target fields on `student`, no forward projection. Blocked on her IEP answer.
-- **Also out of scope:** goal deletion (handled separately), the `chart()` percent-axis ceiling bug.
+- **Also out of scope:** goal deletion (handled separately), and the `chart()` percent-axis
+  ceiling bug — that one is fixed on `main` before this branch opens, per ADR 0003, so
+  expect it already done rather than still broken.
 
 ---
 
@@ -198,7 +202,13 @@ async function attSeed(w) {
   const slot = m.slot({ dayOfWeek: 1, startTime: '09:00', endTime: '09:30',
                         studentIds: [ada.id, bo.id], location: 'Room 4' });
   await st.saveSlot(slot);
-  return { ada, bo, slot };
+  // Task 9 charts a datapoint against a makeup to prove deleteMakeup cleans up after
+  // itself, so the seed carries one objective. Same shape as aggregation.test.js:5-8.
+  const goal = m.goal({ studentId: ada.id, text: 'STUDENT will improve' });
+  await st.saveGoal(goal);
+  const objective = m.objective({ goalId: goal.id, text: 'STUDENT will identify objects' });
+  await st.saveObjective(objective);
+  return { ada, bo, slot, objective };
 }
 
 test('setAttendance refuses a status outside the vocabulary', async () => {
@@ -235,13 +245,47 @@ test('charting against a booked makeup marks it held without losing isMakeup', a
   eq(rows[0].status, 'present', 'a null status is not hers to protect — it is unfilled');
   eq(rows[0].isMakeup, true, 'and it is still the makeup she booked');
 });
+
+test('clearing the note undoes the charting, not the makeup booking', async () => {
+  const w = await loadApp();
+  const { ada, slot } = await attSeed(w);
+  const session = await w.SLP.store.ensureSession(ATT_MONDAY, slot);
+  await w.SLP.db.put('attendance', w.SLP.model.attendance({
+    sessionId: session.id, studentId: ada.id, status: null, isMakeup: true }));
+
+  await w.SLP.store.saveNote({ dateStr: ATT_MONDAY, slot, studentId: ada.id,
+                               text: 'worked on /s/ blends' });
+  // She typed it into the wrong child and clears it again.
+  await w.SLP.store.saveNote({ dateStr: ATT_MONDAY, slot, studentId: ada.id, text: '' });
+
+  const rows = (await w.SLP.db.getAllBy('attendance', 'sessionId', session.id))
+    .filter(r => r.studentId === ada.id);
+  eq(rows.length, 1, 'the appointment she scheduled survives an emptied note');
+  eq(rows[0].status, null, 'back to booked-but-unmarked, not held');
+  eq(rows[0].isMakeup, true,
+     'and still flagged, or the grid can no longer cancel it and the debt silently returns');
+});
+
+test('clearing the note on an ordinary session still withdraws the derived mark', async () => {
+  const w = await loadApp();
+  const { ada, slot } = await attSeed(w);
+  const session = await w.SLP.store.ensureSession(ATT_MONDAY, slot);
+
+  await w.SLP.store.saveNote({ dateStr: ATT_MONDAY, slot, studentId: ada.id, text: 'ok' });
+  await w.SLP.store.saveNote({ dateStr: ATT_MONDAY, slot, studentId: ada.id, text: '' });
+
+  const rows = (await w.SLP.db.getAllBy('attendance', 'sessionId', session.id))
+    .filter(r => r.studentId === ada.id);
+  eq(rows.length, 0,
+     'the makeup carve-out is an exception, not a new general rule — this row still goes');
+});
 ```
 
 - [ ] **Step 3: Run the tests to verify they fail**
 
 Run (background): `bash /home/brenden/dev/slp-tracker/tests/run-tests.sh`
 
-Expected: the new tests fail — `ATTENDANCE_STATUSES` is undefined, `minutesOf` is undefined, `model.attendance` does not throw, and the makeup test shows `status: null` surviving untouched because `deriveAttendance` returns early on it.
+Expected: the new tests fail — `ATTENDANCE_STATUSES` is undefined, `minutesOf` is undefined, `model.attendance` does not throw, and the makeup test shows `status: null` surviving untouched because `deriveAttendance` returns early on it. The cleared-note test fails differently and that difference matters: the row is **deleted outright** (`rows.length` is `0`, not `1`), which is the booking-destruction bug in ADR 0002. Its sibling — the ordinary session — must be **green from the start**; if it is red, the carve-out has been written too broadly and is eating the general rule.
 
 - [ ] **Step 4: Add the vocabulary to the model**
 
@@ -283,6 +327,40 @@ with:
     // it is a makeup she booked and has not held yet, so data entry may fill it in.
     if (existing && existing.status && existing.status !== 'present') return existing;
 ```
+
+**And the delete branch, at `index.html:521-523`** — the early return above is only half the
+fix. Replace:
+
+```js
+    // Nothing entered any more — withdraw a mark the app itself derived.
+    if (existing) await db.del('attendance', existing.id);
+    return null;
+```
+
+with:
+
+```js
+    // Nothing entered any more — withdraw a mark the app itself derived.
+    // But a booked makeup is not a derived mark: she scheduled it. Clearing a note
+    // undoes the charting, not the appointment, so the row survives with its status
+    // reset to null — back to "makeup booked, unmarked". Deleting it here destroyed
+    // the booking: the credit vanished, the debt silently returned, and the row could
+    // no longer be cancelled from the grid, since that control is gated on isMakeup.
+    // Cancelling a makeup stays a deliberate act through the grid's delete control.
+    // See docs/adr/0002-clearing-a-note-keeps-the-makeup-booking.md.
+    if (existing && existing.isMakeup) {
+      existing.status = null;
+      existing.updatedAt = m.now();
+      await db.put('attendance', existing);
+      return existing;
+    }
+    if (existing) await db.del('attendance', existing.id);
+    return null;
+```
+
+This is the only place a cleared note leaves a row behind. It is a deliberate exception to
+the withdraw-a-derived-mark rule, and the comment above must survive review — a later reader
+"simplifying" it back to an unconditional delete reintroduces the bug.
 
 `derive.studentState` — `index.html:760–765`. Replace the body with:
 
@@ -803,7 +881,9 @@ In the `SLP.derive` IIFE, after `attendancePct`:
     const cur = new Date(y, mo - 1, d);
     const out = [];
     // A guard, not a limit: 400 days is longer than any range she would pick, and
-    // it stops a malformed `to` spinning the loop forever.
+    // it stops a malformed `to` spinning the loop forever. An inverted range
+    // (`from > to`) yields nothing rather than looping to the cap.
+    if (!from || !to || from > to) return out;
     while (out.length < 400) {
       const ds = cur.getFullYear() + '-' + pad2(cur.getMonth() + 1) + '-' + pad2(cur.getDate());
       if (ds > to) break;
@@ -1191,8 +1271,15 @@ Replace the contents of `tests/attendance-ui.test.js` with:
 // loads each *.test.js into ONE global scope.
 
 const ATT_UI_MONDAY = '2026-10-05';
+const ATT_UI_TODAY = '2026-10-31';
 
 async function attUiSeed(w) {
+  // Pin the clock. `attendancePct` drops any date after today, so on a real clock every
+  // October 2026 row below would vanish and these assertions would die. `todayStr` is a
+  // namespace export called per render, so overriding it here holds for the whole test.
+  // Pin it — do NOT rewrite these dates into the past, which would silently destroy the
+  // future-exclusion coverage the dropped-date tests exist to provide.
+  w.SLP.ui.todayStr = () => ATT_UI_TODAY;
   const m = w.SLP.model, st = w.SLP.store;
   const ada = m.student({ name: 'Ada', grade: '3', school: 'Lincoln' });
   const bo = m.student({ name: 'Bo', grade: '4', school: 'Fairview' });
@@ -1203,16 +1290,21 @@ async function attUiSeed(w) {
   return { ada, bo, slot };
 }
 
+// House style for a range change is aggregation.test.js:66-69 — set the value, dispatch a
+// bubbling change, then await one render. Re-query between the two renders rather than
+// holding a reference across them: each render tears #app down and builds new nodes, so a
+// handle taken before the first render is detached by the second.
+async function attUiSetRange(w, id, value) {
+  const el = w.document.querySelector('#attendance-' + id);
+  el.value = value;
+  el.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await w.SLP.ui.render();
+}
+
 async function attUiOpen(w, from = '2026-10-01', to = '2026-10-31') {
   await w.SLP.ui.go({ tab: 'attendance' });
-  const doc = w.document;
-  const fromEl = doc.querySelector('#attendance-from');
-  const toEl = doc.querySelector('#attendance-to');
-  fromEl.value = from; fromEl.dispatchEvent(new w.Event('change'));
-  await w.SLP.ui.render();
-  const toEl2 = w.document.querySelector('#attendance-to');
-  toEl2.value = to; toEl2.dispatchEvent(new w.Event('change'));
-  await w.SLP.ui.render();
+  await attUiSetRange(w, 'from', from);
+  await attUiSetRange(w, 'to', to);
   return w.document;
 }
 
@@ -1342,6 +1434,52 @@ test('the legend names every glyph on the page', async () => {
     assert(legend.textContent.toLowerCase().includes(word), 'legend names ' + word);
   }
 });
+
+test('a month band groups the day numbers it repeats', async () => {
+  const w = await loadApp();
+  await attUiSeed(w);
+  // A quarter shows "1" three times; without the band nothing says which month.
+  const doc = await attUiOpen(w, '2026-10-01', '2026-12-31');
+  const band = Array.from(doc.querySelectorAll('#attendance-months .att-month'));
+  eq(band.map(th => th.textContent), ['Oct 2026', 'Nov 2026', 'Dec 2026'], 'one per month');
+  eq(band.map(th => Number(th.getAttribute('colspan'))), [31, 30, 31],
+     'each band spans exactly its own days, or it sits over the wrong columns');
+  const days = doc.querySelectorAll('#attendance-grid thead th.att-day').length;
+  eq(band.reduce((n, th) => n + Number(th.getAttribute('colspan')), 0), days,
+     'the band and the day row must cover the same width');
+});
+
+test('a percentage over an incomplete range is styled as provisional', async () => {
+  const w = await loadApp();
+  const { ada, slot } = await attUiSeed(w);
+  await w.SLP.store.setAttendance({ dateStr: ATT_UI_MONDAY, slot,
+                                    studentId: ada.id, status: 'present' });
+  const doc = await attUiOpen(w, '2026-10-01', '2026-10-19');
+  const pct = attUiRow(doc, ada).querySelector('td.att-pct');
+  assert(pct.textContent.includes('uncharted'), 'the count is there');
+  assert(pct.classList.contains('att-pct-provisional'),
+     'and the number itself looks unfinished — she reads it at a glance onto a note');
+});
+
+test('a fully charted range is not flagged as provisional', async () => {
+  const w = await loadApp();
+  const { ada, slot } = await attUiSeed(w);
+  await w.SLP.store.setAttendance({ dateStr: ATT_UI_MONDAY, slot,
+                                    studentId: ada.id, status: 'present' });
+  const doc = await attUiOpen(w, '2026-10-05', '2026-10-05');
+  const pct = attUiRow(doc, ada).querySelector('td.att-pct');
+  assert(!pct.classList.contains('att-pct-provisional'),
+     'flagging a complete number would make the flag mean nothing');
+});
+
+test('an end date before the start says so instead of emptying the caseload', async () => {
+  const w = await loadApp();
+  await attUiSeed(w);
+  const doc = await attUiOpen(w, '2026-10-31', '2026-10-01');
+  assert(doc.querySelector('#attendance-range-error'),
+     'an empty grid alone reads as "my students are gone", not "I typed the dates backwards"');
+  eq(doc.querySelector('#attendance-grid'), null, 'and no grid is drawn from a range that has no days');
+});
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -1410,11 +1548,21 @@ In the CSS block, immediately before `</style>` (line 205):
      Set to a quarter she does not scroll at all — these columns are the whole point. */
   .att-grid .att-name { position: sticky; left: 0; z-index: 2; text-align: left;
                         min-width: 130px; font-weight: 400; }
+  /* 150px does not fit "78% · 7 of 9 · 3 uncharted" at 13px, and this column is
+     nowrap and sticky, so the overflow lands under the Owed column rather than
+     wrapping. Sized to the longest real string; confirm it in the screenshot pass. */
   .att-grid .att-pct  { position: sticky; right: 96px; z-index: 2; text-align: right;
-                        min-width: 150px; border-left: 1px solid var(--line); }
+                        min-width: 210px; border-left: 1px solid var(--line); }
   .att-grid .att-owed { position: sticky; right: 0; z-index: 2; text-align: right;
                         min-width: 96px; }
   .att-grid thead .att-name, .att-grid thead .att-pct, .att-grid thead .att-owed { z-index: 3; }
+  /* A percentage computed over an incomplete quarter is provisional (spec:174-175).
+     The uncharted count says so in words; this says so at a glance. */
+  .att-grid .att-pct-provisional { font-style: italic; color: var(--muted); }
+  /* The month band above the day numbers. Ruled off so the runs read as groups. */
+  .att-grid thead .att-month { border-bottom: 1px solid var(--line);
+                               border-left: 1px solid var(--line);
+                               font-size: 11px; letter-spacing: .3px; }
   .att-cell { border: 0; background: none; padding: 0 3px; cursor: pointer;
               font: inherit; line-height: 1.2; color: var(--muted); }
   .att-cell[data-state="present"]   { color: var(--ok); }
@@ -1454,6 +1602,24 @@ Insert a new section in `index.html` between the end of `ui.today` (`})();` at l
 
   const dayNum = ds => String(Number(ds.split('-')[2]));
 
+  const MONTH_NAME = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const monthKey = ds => ds.slice(0, 7);
+  const monthLabel = ds => MONTH_NAME[Number(ds.slice(5, 7)) - 1] + ' ' + ds.slice(0, 4);
+
+  // The day row carries day-of-month alone, so a quarter shows "1" three times with
+  // nothing to say which month each belongs to. Group the dates into one band above.
+  function monthBand(dates) {
+    const spans = [];
+    dates.forEach(d => {
+      const k = monthKey(d);
+      const last = spans[spans.length - 1];
+      if (last && last.key === k) last.count++;
+      else spans.push({ key: k, label: monthLabel(d), count: 1 });
+    });
+    return spans;
+  }
+
   function pctText(p) {
     if (p.pct === null) return '—';
     let s = p.pct + '% · ' + p.heldSessions + ' of ' + p.offeredSessions;
@@ -1462,6 +1628,11 @@ Insert a new section in `index.html` between the end of `ui.today` (`})();` at l
     if (p.uncharted) s += ' · ' + p.uncharted + ' uncharted';
     return s;
   }
+
+  // The spec styles the figure as provisional whenever uncharted is non-zero
+  // (spec:174-175). The count alone is not the flag — the number itself must look
+  // unfinished, because that is what she reads at a glance onto a progress note.
+  const pctProvisional = p => !!(p && p.pct !== null && p.uncharted);
 
   function cellEl(date, row, cell) {
     return h('button', {
@@ -1474,7 +1645,18 @@ Insert a new section in `index.html` between the end of `ui.today` (`})();` at l
       'data-slot-id': cell.slotId,
       'aria-label': row.student.name + ', ' + date + ': ' + LABEL[cell.state] +
                     (cell.isMakeup ? ' (makeup)' : ''),
-    }, GLYPH[cell.state] || '?', cell.isMakeup ? h('sup', { text: 'M' }) : null);
+    }, ...makeupGlyph(cell));
+  }
+
+  // Spec glyphs (spec:215): a *held* makeup is the single character `Ⓜ`, and every other
+  // makeup state is its own glyph with a superscript M — so a booked-but-unmarked one
+  // reads `▫ᴹ`. A uniform superscript would make a held makeup indistinguishable from a
+  // held ordinary session at a glance, which is the distinction the column exists for.
+  function makeupGlyph(cell) {
+    const base = GLYPH[cell.state] || '?';
+    if (!cell.isMakeup) return [base];
+    if (cell.state === 'present') return ['Ⓜ'];
+    return [base, h('sup', { text: 'M' })];
   }
 
   function legend() {
@@ -1485,10 +1667,21 @@ Insert a new section in `index.html` between the end of `ui.today` (`})();` at l
       h('span', { text: '∅ cancelled' }),
       h('span', { text: '▫ scheduled, unmarked' }),
       h('span', { text: '· not scheduled' }),
-      h('span', { text: 'ᴹ makeup' }));
+      h('span', { text: 'Ⓜ makeup (held)' }),
+      h('span', { text: '▫ᴹ makeup booked, unmarked' }));
   }
 
   function gridTable(grid) {
+    // Two header rows. The day row carries day-of-month alone, which repeats across a
+    // quarter ("1" three times); the band above it names the month each run belongs to.
+    const monthRow = h('tr', { id: 'attendance-months' },
+      h('th', { class: 'att-name', scope: 'col' }),
+      monthBand(grid.dates).map(s => h('th', {
+        class: 'att-month', scope: 'colgroup', colspan: String(s.count),
+        'data-month': s.key, text: s.label })),
+      h('th', { class: 'att-pct', scope: 'col' }),
+      h('th', { class: 'att-owed', scope: 'col' }));
+
     const head = h('tr', {},
       h('th', { class: 'att-name', scope: 'col', text: 'Student' }),
       grid.dates.map(d => h('th', { class: 'att-day', scope: 'col',
@@ -1507,7 +1700,8 @@ Insert a new section in `index.html` between the end of `ui.today` (`})();` at l
             cells.length ? cells.map(c => cellEl(d, row, c))
                          : h('span', { class: 'att-none', text: '·' }));
         }),
-        h('td', { class: 'att-pct', text: pctText(row.pct) }),
+        h('td', { class: 'att-pct' + (pctProvisional(row.pct) ? ' att-pct-provisional' : ''),
+                  text: pctText(row.pct) }),
         h('td', { class: 'att-owed' },
           row.owed.owed
             ? h('span', { class: 'att-owed-debt', text: '−' + row.owed.owed + ' min' })
@@ -1515,7 +1709,7 @@ Insert a new section in `index.html` between the end of `ui.today` (`})();` at l
 
     return h('div', { class: 'att-wrap' },
       h('table', { class: 'att-grid', id: 'attendance-grid' },
-        h('thead', {}, head), h('tbody', {}, body)));
+        h('thead', {}, monthRow, head), h('tbody', {}, body)));
   }
 
   SLP.ui.views.attendance = async (root) => {
@@ -1535,6 +1729,13 @@ Insert a new section in `index.html` between the end of `ui.today` (`})();` at l
       await SLP.ui.render();
     });
 
+    // She sets the two ends one at a time, so "end before start" is a normal state on
+    // the way from one range to another — the picker stores what she typed and says so,
+    // rather than refusing the keystroke and stranding her half-way. eachDate yields
+    // nothing for an inverted range, so the grid below is empty rather than wrong.
+    const invalidRange = !ui.range.from || !ui.range.to || ui.range.from > ui.range.to;
+    if (invalidRange) SLP.ui.toast('The end date must be after the start.', 'warn');
+
     const data = await SLP.store.attendanceRange({
       from: ui.range.from, to: ui.range.to, today: SLP.ui.todayStr() });
 
@@ -1553,15 +1754,20 @@ Insert a new section in `index.html` between the end of `ui.today` (`})();` at l
       h('h2', { text: 'Attendance' }),
       h('div', { class: 'row-form' }, 'From', from, 'to', to),
       filters.el,
-      grid.rows.length
-        ? gridTable(grid)
-        : h('p', { class: 'empty', text: 'No students match.' }),
+      invalidRange
+        ? h('p', { class: 'empty', id: 'attendance-range-error',
+                   text: 'The end date must be after the start.' })
+        : grid.rows.length
+          ? gridTable(grid)
+          : h('p', { class: 'empty', text: 'No students match.' }),
       legend()));
   };
-
-  SLP.ui.attendance = { GLYPH, LABEL, pctText };
 })();
 ```
+
+The message appears twice on purpose: the toast is what she notices, and the line in the
+panel is what is still on screen a few seconds later when she looks back at an empty grid
+and wonders whether her caseload has gone.
 
 - [ ] **Step 7: Run the tests to verify they pass**
 
@@ -1587,6 +1793,13 @@ google-chrome --headless=new --no-sandbox --disable-gpu \
 ```
 
 A blank capture means the flag crept back in, or the shot beat the async render — take a second one before concluding the layout is broken. The grid is this app's widest, most alignment-dependent surface; a picture catches the sticky-column overlap that a `getBoundingClientRect()` number can agree with and still look wrong.
+
+**Judge the picture yourself.** Do not defer the visual call to Brenden — open the PNG, look
+at it, and say in the commit message what you concluded. Two things to look for specifically,
+because both are live suspicions rather than hypotheticals: the `%` column is `nowrap` and
+sticky, so `78% · 7 of 9 · 3 uncharted` overflowing its `min-width` slides under `Owed`
+rather than wrapping; and the month band's `colspan` runs must line up with the day columns
+beneath them. Keep the shot — Task 10 Step 7 collects it into one contact sheet.
 
 - [ ] **Step 9: Commit**
 
@@ -1687,10 +1900,11 @@ test('marking a day the schedule never had still works', async () => {
   const w = await loadApp();
   const { ada, slot } = await attUiSeed(w);
   // A one-off session on a Wednesday: no slot, so the cell comes from the session.
-  await w.SLP.store.bookMakeupOrSession
-    ? null
-    : await w.SLP.db.put('sessions', w.SLP.model.session({
-        date: '2026-10-07', startTime: '11:00', endTime: '11:30', roster: [ada.id] }));
+  // Written straight to the store because Task 9's bookMakeup does not exist yet — and
+  // this test is about marking an ad-hoc cell, not about how it came to be booked.
+  await w.SLP.db.put('sessions', w.SLP.model.session({
+    date: '2026-10-07', slotId: null, startTime: '11:00', endTime: '11:30',
+    roster: [ada.id] }));
   const doc = await attUiOpen(w, '2026-10-05', '2026-10-09');
   const cells = attUiCells(doc, ada, '2026-10-07');
   eq(cells.length, 1, 'the ad-hoc session has a cell');
@@ -1703,8 +1917,6 @@ test('marking a day the schedule never had still works', async () => {
      'a session with no slot is still markable');
 });
 ```
-
-**Note for the implementer:** the `bookMakeupOrSession` ternary in the last test is a placeholder for "there is no booking API yet" — replace that whole expression with a plain `await w.SLP.db.put(...)` line. It is written this way only so the test reads correctly before Task 9 exists; simplify it to the `db.put` call when you paste it in.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -1956,21 +2168,71 @@ test('a booked makeup appears on Today for its date', async () => {
 
 test('deleting a makeup takes its rows with it', async () => {
   const w = await loadApp();
-  const { ada } = await attSeed(w);
+  const { ada, objective } = await attSeed(w);
   const { session } = await w.SLP.store.bookMakeup({
     date: '2026-10-16', startTime: '11:00', endTime: '11:30', studentId: ada.id });
-  await w.SLP.store.saveNote({
-    dateStr: '2026-10-16',
-    slot: { id: null, startTime: '11:00', endTime: '11:30', studentIds: [ada.id], location: '' },
-    studentId: ada.id, text: 'x' });
+  const adHocSlot = { id: null, sessionId: session.id, startTime: '11:00',
+                      endTime: '11:30', studentIds: [ada.id], location: '' };
+  await w.SLP.store.saveNote({ dateStr: '2026-10-16', slot: adHocSlot,
+                               studentId: ada.id, text: 'x' });
+  await w.SLP.store.recordValue({ dateStr: '2026-10-16', slot: adHocSlot,
+                                  studentId: ada.id, objectiveId: objective.id,
+                                  fieldId: objective.fields[0].id, raw: '4' });
 
   await w.SLP.store.deleteMakeup(session.id);
 
   eq(await w.SLP.db.get('sessions', session.id), undefined, 'the session is gone');
-  eq((await w.SLP.db.getAllBy('attendance', 'sessionId', session.id)).length, 0,
-     'and so is its attendance row — rows nothing can read again still ride in every backup');
+  // All four stores, not just the two that are easy to reach — the notes and datapoints
+  // loop is the half that was shipped untested, and a backup carries whatever it misses.
+  for (const store of ['attendance', 'notes', 'datapoints']) {
+    eq((await w.SLP.db.getAllBy(store, 'sessionId', session.id)).length, 0,
+       store + ' rows nothing can read again still ride in every backup she makes');
+  }
+});
+
+test('two makeups on one day do not write into each other', async () => {
+  const w = await loadApp();
+  const { ada, bo } = await attSeed(w);
+  // The collision ADR 0001 exists for: both sessions are slotless on the same date, so
+  // a lookup keyed on `slotId === null` cannot tell them apart and returns the first.
+  const first = await w.SLP.store.bookMakeup({ date: '2026-10-16', startTime: '11:00',
+                                               endTime: '11:30', studentId: ada.id });
+  const second = await w.SLP.store.bookMakeup({ date: '2026-10-16', startTime: '13:00',
+                                                endTime: '13:30', studentId: bo.id });
+  assert(first.session.id !== second.session.id, 'two bookings, two sessions');
+
+  await w.SLP.store.saveNote({
+    dateStr: '2026-10-16',
+    slot: { id: null, sessionId: second.session.id, startTime: '13:00', endTime: '13:30',
+            studentIds: [bo.id], location: '' },
+    studentId: bo.id, text: 'bo worked on /r/' });
+
+  const onFirst = await w.SLP.db.getAllBy('notes', 'sessionId', first.session.id);
+  const onSecond = await w.SLP.db.getAllBy('notes', 'sessionId', second.session.id);
+  eq(onFirst.length, 0, "Ada's session must not receive a note written against Bo's");
+  eq(onSecond.length, 1, 'the note belongs to the session it was written against');
+});
+
+test('an ad-hoc session cannot be addressed by date alone', async () => {
+  const w = await loadApp();
+  const { ada } = await attSeed(w);
+  await w.SLP.store.bookMakeup({ date: '2026-10-16', startTime: '11:00',
+                                 endTime: '11:30', studentId: ada.id });
+  let threw = null;
+  try {
+    await w.SLP.store.saveNote({
+      dateStr: '2026-10-16',
+      slot: { id: null, startTime: '11:00', endTime: '11:30', studentIds: [ada.id], location: '' },
+      studentId: ada.id, text: 'x' });
+  } catch (e) { threw = e; }
+  assert(threw, 'a slotless slot with no sessionId names no session — guessing is the bug');
 });
 ```
+
+Note the `sessionId` on every hand-built ad-hoc slot above. Before Step 4 that field is
+ignored and these tests pass by accident on a one-makeup date; the two-makeup test is the one
+that cannot. `attSeed` returns `objective` for the `deleteMakeup` test — it was extended in Task 1
+Step 2 for exactly this. `objective.fields[0]` is the trials field the preset supplies.
 
 Append to `tests/attendance-ui.test.js`:
 
@@ -2069,6 +2331,15 @@ test('a regular session offers no delete', async () => {
 Run (background): `bash /home/brenden/dev/slp-tracker/tests/run-tests.sh`
 Expected: `makeupDuration`, `bookMakeup`, `deleteMakeup` are not functions; `.att-owed-open` is null.
 
+The two lookup tests fail for their own reasons, and confirming *which* reason is the point
+of this step. Once Step 5 has given you a working `bookMakeup` but before Step 4 lands,
+re-run them: "two makeups on one day" must fail by putting Bo's note on **Ada's** session
+(`onFirst.length` is `1`) — the collision itself, not a missing function — and "cannot be
+addressed by date alone" must fail by *not throwing*. A test that goes red only because
+`bookMakeup` is undefined has proved nothing about the lookup. If that means doing Step 5
+before Step 4, do it in that order and note it in the commit message; proving these two red
+for the right reason matters more than the step numbering.
+
 - [ ] **Step 3: Add `makeupDuration` to derive**
 
 In the `SLP.derive` IIFE, after `monthRange`:
@@ -2087,7 +2358,69 @@ In the `SLP.derive` IIFE, after `monthRange`:
 
 Add `makeupDuration` to the derive return list.
 
-- [ ] **Step 4: Add the store write paths**
+- [ ] **Step 4: Address an ad-hoc session by its id, not by its slot**
+
+**Do this before Step 5.** This task is what makes slotless sessions routine, and the
+existing lookup cannot tell two of them apart. `findSession(dateStr, slotId)` finds a session
+by the slot it came from — but a booked makeup has `slotId: null`, and
+`onDate.find(s => s.slotId === null)` matches the *first* slotless session on that date. Book
+two makeups on one day and charting the second writes into the first. Two different students'
+makeups collide just as readily. See `docs/adr/0001-ad-hoc-sessions-are-found-by-id-not-slot.md`.
+
+`findSession` — `index.html:480-483`. Replace:
+
+```js
+  async function findSession(dateStr, slotId) {
+    const onDate = await db.getAllBy('sessions', 'date', dateStr);
+    return onDate.find(s => s.slotId === slotId) || null;
+  }
+```
+
+with:
+
+```js
+  // A slotless session has no template to be found by, so there is no honest answer
+  // here — `find(s => s.slotId === null)` would return whichever ad-hoc session on this
+  // date happens to be first. Ad-hoc sessions are addressed by their own id instead.
+  async function findSession(dateStr, slotId) {
+    if (!slotId) return null;
+    const onDate = await db.getAllBy('sessions', 'date', dateStr);
+    return onDate.find(s => s.slotId === slotId) || null;
+  }
+```
+
+`ensureSession` — `index.html:485-495`. Every write path (`recordValue`, `saveNote`,
+`setAttendance`) funnels through it, so this is the one place the id has to be honoured.
+Insert as the first statement of the body:
+
+```js
+    // An ad-hoc session is addressed by id. planForDate puts it on the synthetic slot
+    // it builds, and bookMakeup returns it; there is nothing to create here, because a
+    // session with no slot cannot be conjured from a date the way a recurring one can.
+    if (!slot.id) {
+      if (!slot.sessionId) throw new Error('an ad-hoc session must be addressed by sessionId');
+      const adHoc = await db.get('sessions', slot.sessionId);
+      if (!adHoc) throw new Error('unknown session: ' + slot.sessionId);
+      return adHoc;
+    }
+```
+
+`planForDate` — `index.html:641-645`. The synthetic slot must carry the id. Add `sessionId`:
+
+```js
+      for (const session of adHoc) {
+        entries.push(await build(
+          { id: null, sessionId: session.id, dayOfWeek: dow, startTime: session.startTime,
+            endTime: session.endTime, studentIds: session.roster, location: session.location },
+          session));
+      }
+```
+
+Deliberately **not** a synthetic `slotId` (`makeup:<uid>`): that would put ids of slots that
+do not exist into a field meaning "the template this came from", and it would break the
+`!s.slotId` test that folds ad-hoc sessions into Today in the first place.
+
+- [ ] **Step 5: Add the store write paths**
 
 In the `SLP.store` returned object, after `setSessionAttendance`:
 
@@ -2123,7 +2456,7 @@ In the `SLP.store` returned object, after `setSessionAttendance`:
     },
 ```
 
-- [ ] **Step 5: Add the booking form to the view**
+- [ ] **Step 6: Add the booking form to the view**
 
 Add to the `ui.attendance` state object: `booking: null, armedDelete: null`.
 
@@ -2146,11 +2479,24 @@ Add before `SLP.ui.views.attendance`:
     return p(Math.floor(total / 60) % 24) + ':' + p(total % 60);
   };
 
+  // Her own usual time is the better guess than a number we invented: a makeup at the
+  // hour she already sees this child is the one most likely to be free in both their
+  // timetables. 11:00 survives only as the fallback for a student with no slot at all.
+  // Open question 4 in docs/OPEN-QUESTIONS.md — she may well fit makeups into a specific
+  // free period instead, in which case this becomes a fixed time again.
+  function usualStart(slots, studentId) {
+    const mine = (slots || [])
+      .filter(s => (s.studentIds || []).includes(studentId) && s.startTime)
+      .map(s => s.startTime)
+      .sort();
+    return mine[0] || '11:00';
+  }
+
   function bookingForm(slots) {
     if (!ui.booking) return null;
     const { student, owed } = ui.booking;
     const minutes = SLP.derive.makeupDuration(owed, slots, student.id);
-    const start = '11:00';
+    const start = usualStart(slots, student.id);
 
     const date = h('input', { type: 'date', id: 'att-book-date',
                               value: nextWeekday(SLP.ui.todayStr()) });
@@ -2171,7 +2517,9 @@ Add before `SLP.ui.views.attendance`:
               SLP.ui.toast('A makeup needs a date and a time.', 'warn'); return;
             }
             if (SLP.derive.minutesOf({ startTime: from.value, endTime: to.value }) <= 0) {
-              SLP.ui.toast('The end time must come after the start.', 'warn'); return;
+              // Word for word what the schedule form says at index.html:1302. The same
+              // mistake must not get two different sentences in one app.
+              SLP.ui.toast('The end time must be after the start.', 'warn'); return;
             }
             await SLP.store.bookMakeup({
               date: date.value, startTime: from.value, endTime: to.value,
@@ -2252,12 +2600,14 @@ In `SLP.ui.views.attendance`, add `bookingForm(data.slots)` to the section, betw
       grid.rows.length ? gridTable(grid) : h('p', { class: 'empty', text: 'No students match.' }),
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [ ] **Step 7: Run the tests to verify they pass**
 
 Run (background): `bash /home/brenden/dev/slp-tracker/tests/run-tests.sh`
-Expected: all pass, 0 failed.
+Expected: all pass, 0 failed. Step 4 changes `ensureSession`, which every write path in the
+app funnels through — a failure anywhere in Today, Schedule or the entry tests is this step,
+not the booking form.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git -C /home/brenden/dev/slp-tracker add index.html tests/attendance-derive.test.js tests/attendance-store.test.js tests/attendance-ui.test.js
@@ -2389,7 +2739,8 @@ In the `ui.attendance` IIFE, add its own range state and the hook — after `SLP
     container.appendChild(h('section', { class: 'panel', id: 'student-attendance' },
       h('h2', { text: 'Attendance' }),
       h('div', { class: 'row-form' }, 'From', from, 'to', to),
-      h('p', { id: 'student-attendance-pct', text: pctText(pct) }),
+      h('p', { id: 'student-attendance-pct', text: pctText(pct),
+               class: pctProvisional(pct) ? 'att-pct-provisional' : '' }),
       h('p', { id: 'student-attendance-owed', class: 'muted',
                text: owed ? 'Makeup owed: ' + owed + ' min' : 'No makeup owed.' })));
   };
@@ -2441,16 +2792,29 @@ window.SLP = { version: '1.7.0' };
 Run (background): `bash /home/brenden/dev/slp-tracker/tests/run-tests.sh`
 Expected: the whole suite passes, 0 failed.
 
-- [ ] **Step 7: Hand-check the loop end to end**
+- [ ] **Step 7: Drive the loop end to end yourself, and judge the pictures**
 
-A green suite is blind to layout, scroll position and async timing — all three of this app's failure modes. Open `index.html` in a real browser, restore `tmp/slp-test-data.json` through the backup UI, and walk the loop:
+A green suite is blind to layout, scroll position and async timing — all three of this app's
+failure modes. This step is **not** a hand-off to Brenden: drive it, look at it, and make the
+call yourself, per `docs/AUTONOMY.md`.
+
+Write `tmp/walk-attendance.html` alongside `tmp/measure-attendance.html` from Task 7 Step 8:
+load the real app in an iframe, seed from `tmp/gen-seed.js`, and drive the loop below through
+`SLP.ui`, capturing a screenshot at each numbered stop. Same Chrome invocation as Task 7 Step
+8 — **no `--virtual-time-budget`**, which expires before IndexedDB settles and captures blank.
 
 1. Open Attendance. The range is the current month; the grid scrolls sideways while her name, `%` and `Owed` stay put.
 2. Mark a cell `missed`. `Owed` shows `−30 min` without the page jumping back to the header.
-3. Click the balance, book a makeup on a day that is not her scheduled day. It appears with the `ᴹ` glyph.
-4. Open Today on that date. The makeup is there. Type a note. Return to Attendance — the cell is `✓ᴹ` and `Owed` reads `—`.
-5. Widen the range to a quarter. No horizontal scrolling is needed to read `%` and `Owed`.
+3. Click the balance, book a makeup on a day that is not her scheduled day. It appears as `▫ᴹ`.
+4. Open Today on that date. The makeup is there. Type a note. Return to Attendance — the cell is `Ⓜ` and `Owed` reads `—`.
+5. Widen the range to a quarter. No horizontal scrolling is needed to read `%` and `Owed`, and the month band names each run of days.
 6. Open that student on the Students tab. The percentage matches the grid.
+
+Then assemble every shot from this step and from Task 7 Step 8 into one contact sheet at
+`tmp/attendance-contact-sheet.html` — a plain grid of `<img>` with its stop number and a
+one-line verdict under each. Put anything you were unsure about at the top, in words, rather
+than leaving it for Brenden to spot. A stop you could not drive is a finding: say so on the
+sheet and in the commit message.
 
 - [ ] **Step 8: Commit**
 
@@ -2495,9 +2859,30 @@ git -C /home/brenden/dev/slp-tracker commit -m "feat: the attendance percentage 
 | `store.attendanceRange` / `derive.attendanceGrid` split | 5, 4 |
 | No per-session query fan-out | 5 |
 | Percentage on the student detail page | 10 |
+| Percentage styled provisional when uncharted is non-zero (spec:174-175) | 7 |
+| Month band above the repeating day numbers | 7 |
+| `Ⓜ` held makeup, `▫ᴹ` booked-unmarked (spec:215) | 7 |
 | Stage 2, service targets, projection | **deliberately absent** — blocked |
 
-**Placeholder scan:** every code step carries real code. The one deliberate stand-in is flagged inline — the `bookMakeupOrSession` ternary in Task 8's last test, with a note telling the implementer to replace it with the plain `db.put` line, since Task 8 precedes the booking API.
+**Decisions carried in from the ADRs**, each with the task that implements it:
+
+| Decision | ADR | Task |
+|---|---|---|
+| Clearing a note keeps the makeup booking (`status` resets to `null`) | 0002 | 1 (Step 5) |
+| An ad-hoc session is addressed by session id, never by a null `slotId` | 0001 | 9 (Step 4) |
+| Objective charts scale past criterion | 0003 | **not this plan** — landed on `main` first |
+
+**Open questions this plan assumes an answer to** (`docs/OPEN-QUESTIONS.md` — do not treat
+any of these as settled):
+
+- **Q1, the divisor.** The percentage is computed in minutes. Every fixture slot is 30
+  minutes, so minutes and session-count produce identical numbers and **the suite cannot tell
+  the two definitions apart** — the tests "around minutes" in Task 3 prove nothing about
+  which one is implemented. If she says sessions, Task 3 needs revisiting.
+- **Q4, the booking default.** The start time defaults to that student's own usual slot time,
+  falling back to `11:00` for a student with no slot (Task 9, `usualStart`).
+
+**Placeholder scan:** every code step carries real code, and there are no deliberate stand-ins left. Task 8's last test seeds its ad-hoc session with a plain `db.put` because the booking API does not exist until Task 9 — that is the real seeding path for that test, not a placeholder to swap out.
 
 **Type consistency:**
 - `minutesOf(span)` takes `{ startTime, endTime }` — used against slots (Task 9), sessions (Task 4), and raw time pairs (Task 9's validation). Consistent.
@@ -2511,9 +2896,14 @@ git -C /home/brenden/dev/slp-tracker commit -m "feat: the attendance percentage 
 ## Verify before acting
 
 ```bash
-git -C /home/brenden/dev/slp-tracker log --oneline -1     # expect 74db3e7 before Task 1
-git -C /home/brenden/dev/slp-tracker status --short       # expect clean
-bash /home/brenden/dev/slp-tracker/tests/run-tests.sh     # expect 254 tests, 0 failed (~2 min)
+git -C /home/brenden/dev/slp-tracker rev-parse --short HEAD  # 02598c7 or later
+git -C /home/brenden/dev/slp-tracker status --short          # expect clean
+bash /home/brenden/dev/slp-tracker/tests/run-tests.sh        # expect 256 tests, 0 failed (~2 min)
 ```
 
-Run the baseline before Task 1. If it is not 254/0, reconcile that first — a plan that starts from a red suite cannot tell its own failures from the ones already there.
+Run the baseline before Task 1. If it is not 256/0, reconcile that first — a plan that starts from a red suite cannot tell its own failures from the ones already there.
+
+Three fixes land on `main` between `02598c7` and Task 1 — the `deleteSlot` orphan, the chart
+ceiling (ADR 0003) and the scroll/collapse regression tests. Each adds tests, so the real
+baseline is **256 plus whatever those three contribute**. Take the count from your own run of
+the suite immediately before Task 1, not from this line.

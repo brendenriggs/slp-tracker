@@ -270,7 +270,7 @@
 // SLP Session Tracker — one file, no build step, no network.
 // Sections below are ordered by dependency; each only uses those above it.
 // ============================================================
-window.SLP = { version: '1.6.0' };
+window.SLP = { version: '1.7.0' };
 
 // ============================================================
 // SECTION: db — IndexedDB access. Knows stores, not meaning.
@@ -2054,7 +2054,12 @@ SLP.ui = (() => {
         },
       })));
 
-    // Task 12 appends the history and progress sections here.
+    // ui.aggregation and ui.attendance append their sections here. Both are defined
+    // in later sections of this file, so both are guarded — the detail page renders
+    // with whatever has loaded.
+    if (SLP.ui.students.renderAttendance) {
+      await SLP.ui.students.renderAttendance(detail, student);
+    }
     if (SLP.ui.students.renderAggregation) {
       await SLP.ui.students.renderAggregation(detail, student);
     }
@@ -2902,6 +2907,43 @@ SLP.ui = (() => {
           ? gridTable(grid, data.slots)
           : h('p', { class: 'empty', text: 'No students match.' }),
       legend()));
+  };
+
+  // The student page has its own range: she is writing one child's progress note and
+  // may want a different window from whatever the grid is showing. Same arithmetic,
+  // same pure function — the two can disagree about the range, never about the number.
+  const detail = { range: null };
+
+  SLP.ui.students.renderAttendance = async (container, student) => {
+    if (!detail.range) detail.range = SLP.derive.monthRange(SLP.ui.todayStr());
+
+    const from = h('input', { type: 'date', id: 'student-attendance-from',
+                              value: detail.range.from });
+    const to = h('input', { type: 'date', id: 'student-attendance-to',
+                            value: detail.range.to });
+    from.addEventListener('change', async () => {
+      detail.range = { from: from.value, to: detail.range.to };
+      await SLP.ui.render();
+    });
+    to.addEventListener('change', async () => {
+      detail.range = { from: detail.range.from, to: to.value };
+      await SLP.ui.render();
+    });
+
+    const data = await SLP.store.attendanceRange({
+      from: detail.range.from, to: detail.range.to, today: SLP.ui.todayStr() });
+    const grid = SLP.derive.attendanceGrid(data);
+    const row = grid.rows.find(r => r.student.id === student.id);
+    const pct = row ? row.pct : { pct: null, heldSessions: 0, offeredSessions: 0, uncharted: 0 };
+    const owed = row ? row.owed.owed : 0;
+
+    container.appendChild(h('section', { class: 'panel', id: 'student-attendance' },
+      h('h2', { text: 'Attendance' }),
+      h('div', { class: 'row-form' }, 'From', from, 'to', to),
+      h('p', { id: 'student-attendance-pct', text: pctText(pct),
+               class: pctProvisional(pct) ? 'att-pct-provisional' : '' }),
+      h('p', { id: 'student-attendance-owed', class: 'muted',
+               text: owed ? 'Makeup owed: ' + owed + ' min' : 'No makeup owed.' })));
   };
 })();
 

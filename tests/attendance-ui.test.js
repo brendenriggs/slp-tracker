@@ -446,3 +446,65 @@ test('opening the booking form closes an open popover, and opening a cell closes
      'and clicking her cell again closes the form the same way');
   assert(w.document.querySelector('#att-popover'), 'in favour of the popover');
 });
+
+async function attUiOpenStudent(w, student) {
+  await w.SLP.ui.go({ tab: 'students', studentId: student.id });
+  return w.document;
+}
+
+test('a student’s page carries the same percentage, over a range she picks', async () => {
+  const w = await loadApp();
+  const { ada, slot } = await attUiSeed(w);
+  await w.SLP.store.setAttendance({ dateStr: ATT_UI_MONDAY, slot,
+                                    studentId: ada.id, status: 'present' });
+  await w.SLP.store.setAttendance({ dateStr: '2026-10-12', slot,
+                                    studentId: ada.id, status: 'absent' });
+
+  const doc = await attUiOpenStudent(w, ada);
+  const panel = doc.querySelector('#student-attendance');
+  assert(panel, 'it is where she will already be looking when she writes the note');
+
+  const from = doc.querySelector('#student-attendance-from');
+  const to = doc.querySelector('#student-attendance-to');
+  from.value = '2026-10-01'; from.dispatchEvent(new w.Event('change'));
+  await w.SLP.ui.render();
+  const to2 = w.document.querySelector('#student-attendance-to');
+  to2.value = '2026-10-31'; to2.dispatchEvent(new w.Event('change'));
+  await w.SLP.ui.render();
+
+  const pct = w.document.querySelector('#student-attendance-pct').textContent;
+  assert(pct.includes('50%'), 'the same arithmetic as the grid — got ' + pct);
+  assert(pct.includes('1 of 2'), 'and the same counts — got ' + pct);
+});
+
+test('the student page and the grid never disagree', async () => {
+  const w = await loadApp();
+  const { ada, slot } = await attUiSeed(w);
+  await w.SLP.store.setAttendance({ dateStr: ATT_UI_MONDAY, slot,
+                                    studentId: ada.id, status: 'missed' });
+  await w.SLP.store.setAttendance({ dateStr: '2026-10-12', slot,
+                                    studentId: ada.id, status: 'present' });
+
+  const gridDoc = await attUiOpen(w, '2026-10-01', '2026-10-31');
+  const gridPct = attUiRow(gridDoc, ada).querySelector('td.att-pct').textContent;
+  const gridOwed = attUiRow(gridDoc, ada).querySelector('td.att-owed').textContent;
+
+  const doc = await attUiOpenStudent(w, ada);
+  const from = doc.querySelector('#student-attendance-from');
+  from.value = '2026-10-01'; from.dispatchEvent(new w.Event('change'));
+  await w.SLP.ui.render();
+  const to = w.document.querySelector('#student-attendance-to');
+  to.value = '2026-10-31'; to.dispatchEvent(new w.Event('change'));
+  await w.SLP.ui.render();
+
+  eq(w.document.querySelector('#student-attendance-pct').textContent, gridPct,
+     'one pure function feeds both, so they cannot drift');
+  assert(w.document.querySelector('#student-attendance-owed').textContent
+           .includes(gridOwed.replace('−', '').replace(' min', '').trim()),
+     'and the debt agrees too');
+});
+
+test('the version records that Attendance shipped', async () => {
+  const w = await loadApp();
+  eq(w.SLP.version, '1.7.0', 'a new tab is a minor bump');
+});

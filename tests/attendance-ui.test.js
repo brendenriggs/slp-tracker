@@ -504,6 +504,50 @@ test('the student page and the grid never disagree', async () => {
      'and the debt agrees too');
 });
 
+// The grid has said this since it shipped (#attendance-range-error). The student page
+// had no equivalent, so an inverted range emptied the panel with nothing to explain it —
+// and since the arithmetic is now bound to the drawn columns, "blank" is exactly what a
+// bad range produces here.
+async function attUiStudentRange(w, from, to) {
+  const a = w.document.querySelector('#student-attendance-from');
+  a.value = from; a.dispatchEvent(new w.Event('change'));
+  await w.SLP.ui.render();
+  const b = w.document.querySelector('#student-attendance-to');
+  b.value = to; b.dispatchEvent(new w.Event('change'));
+  await w.SLP.ui.render();
+}
+
+test('an inverted range on the student page says so instead of going blank', async () => {
+  const w = await loadApp();
+  const { ada, slot } = await attUiSeed(w);
+  await w.SLP.store.setAttendance({ dateStr: ATT_UI_MONDAY, slot,
+                                    studentId: ada.id, status: 'present' });
+  await attUiOpenStudent(w, ada);
+  await attUiStudentRange(w, '2026-10-31', '2026-10-01');
+
+  const msg = w.document.querySelector('#student-attendance-range-error');
+  assert(msg, 'she is writing a progress note — a blank panel reads as a child with no sessions');
+  eq(msg.textContent, 'The end date must be after the start.', 'the same words the grid uses');
+  eq(w.document.querySelector('#student-attendance-pct'), null,
+     'and no percentage stands beside a range that has no days');
+  assert(w.document.querySelector('#student-attendance-from'),
+         'the dates stay on screen, or she cannot correct what she typed');
+});
+
+test('a cleared date on the student page says so too', async () => {
+  const w = await loadApp();
+  const { ada, slot } = await attUiSeed(w);
+  await w.SLP.store.setAttendance({ dateStr: ATT_UI_MONDAY, slot,
+                                    studentId: ada.id, status: 'present' });
+  await attUiOpenStudent(w, ada);
+  await attUiStudentRange(w, '', '2026-10-31');
+
+  assert(w.document.querySelector('#student-attendance-range-error'),
+         'an empty date input is a range with no days, same as an inverted one');
+  eq(w.document.querySelector('#student-attendance-pct'), null,
+     'nothing is claimed over a range she has not finished picking');
+});
+
 test('the version records that Attendance shipped', async () => {
   const w = await loadApp();
   eq(w.SLP.version, '1.7.0', 'a new tab is a minor bump');

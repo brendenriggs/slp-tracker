@@ -2974,6 +2974,13 @@ SLP.ui = (() => {
       await SLP.ui.render();
     });
 
+    // The same guard the grid carries, in the panel's own register. She sets the two ends
+    // one at a time, so a half-picked range is a normal state on the way through — and a
+    // range with no days now yields no number at all, which without this reads as a child
+    // who has no sessions rather than as two dates she has not finished typing.
+    const invalidRange = !detail.range.from || !detail.range.to ||
+                         detail.range.from > detail.range.to;
+
     const data = await SLP.store.attendanceRange({
       from: detail.range.from, to: detail.range.to, today: SLP.ui.todayStr() });
     const grid = SLP.derive.attendanceGrid(data);
@@ -2984,10 +2991,13 @@ SLP.ui = (() => {
     container.appendChild(h('section', { class: 'panel', id: 'student-attendance' },
       h('h2', { text: 'Attendance' }),
       h('div', { class: 'row-form' }, 'From', from, 'to', to),
-      h('p', { id: 'student-attendance-pct', text: pctText(pct),
-               class: pctProvisional(pct) ? 'att-pct-provisional' : '' }),
-      h('p', { id: 'student-attendance-owed', class: 'muted',
-               text: owed ? 'Makeup owed: ' + owed + ' min' : 'No makeup owed.' })));
+      invalidRange
+        ? h('p', { class: 'empty', id: 'student-attendance-range-error',
+                   text: 'The end date must be after the start.' })
+        : [h('p', { id: 'student-attendance-pct', text: pctText(pct),
+                    class: pctProvisional(pct) ? 'att-pct-provisional' : '' }),
+           h('p', { id: 'student-attendance-owed', class: 'muted',
+                    text: owed ? 'Makeup owed: ' + owed + ' min' : 'No makeup owed.' })]));
   };
 })();
 

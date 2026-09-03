@@ -352,3 +352,37 @@ test('the range defaults to the month she is in', async () => {
   eq(w.SLP.derive.monthRange('2026-02-03'), { from: '2026-02-01', to: '2026-02-28' },
      'and February knows its own length');
 });
+
+test('a makeup is proposed at one session’s length, not the whole debt', async () => {
+  const w = await loadApp();
+  const m = w.SLP.model;
+  const slot = m.slot({ dayOfWeek: 1, startTime: '09:00', endTime: '09:30',
+                        studentIds: ['s1'] });
+  eq(w.SLP.derive.makeupDuration(90, [slot], 's1'), 30,
+     'a student owed 90 minutes gets a 30-minute makeup proposed, not a 90-minute one');
+});
+
+test('a makeup shorter than one session is proposed at what is owed', async () => {
+  const w = await loadApp();
+  const slot = w.SLP.model.slot({ dayOfWeek: 1, startTime: '09:00', endTime: '09:30',
+                                  studentIds: ['s1'] });
+  eq(w.SLP.derive.makeupDuration(15, [slot], 's1'), 15, 'never longer than the debt');
+});
+
+test('the cap is that student’s longest regular session', async () => {
+  const w = await loadApp();
+  const m = w.SLP.model;
+  const short = m.slot({ dayOfWeek: 1, startTime: '09:00', endTime: '09:30',
+                         studentIds: ['s1'] });
+  const long = m.slot({ dayOfWeek: 3, startTime: '11:00', endTime: '12:00',
+                        studentIds: ['s1'] });
+  const other = m.slot({ dayOfWeek: 4, startTime: '13:00', endTime: '15:00',
+                         studentIds: ['s2'] });
+  eq(w.SLP.derive.makeupDuration(120, [short, long, other], 's1'), 60,
+     'someone else’s two-hour block is not a cap on hers');
+});
+
+test('a student with no regular slot is proposed the whole debt', async () => {
+  const w = await loadApp();
+  eq(w.SLP.derive.makeupDuration(45, [], 's1'), 45, 'nothing to cap against');
+});

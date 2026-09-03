@@ -262,3 +262,112 @@ test('a session-wide mark creates no debt for a child who was absent', async () 
   eq(adaRow.owed.owed, 0, 'a child who stayed home is owed nothing');
   eq(boRow.owed.owed, 30, 'Bo turned up to a session that did not happen');
 });
+
+test('booking a makeup writes a one-off session and an unheld makeup row', async () => {
+  const w = await loadApp();
+  const { ada } = await attSeed(w);
+  const { session, attendance } = await w.SLP.store.bookMakeup({
+    date: '2026-10-16', startTime: '11:00', endTime: '11:30',
+    location: 'Room 4', studentId: ada.id });
+
+  eq(session.slotId, null, 'a one-off is not recurring');
+  eq(session.roster, [ada.id], 'a roster of one');
+  eq(attendance.isMakeup, true, 'the makeup flag is per-student, on the row');
+  eq(attendance.status, null,
+     'booked is not held — crediting it now would zero the debt before the session happens');
+});
+
+test('booking a makeup does not pay the debt down until it is held', async () => {
+  const w = await loadApp();
+  const { ada, slot } = await attSeed(w);
+  await w.SLP.store.setAttendance({ dateStr: ATT_MONDAY, slot,
+                                    studentId: ada.id, status: 'missed' });
+  await w.SLP.store.bookMakeup({ date: '2026-10-16', startTime: '11:00',
+                                 endTime: '11:30', studentId: ada.id });
+
+  const before = w.SLP.derive.attendanceGrid(await w.SLP.store.attendanceRange({
+    from: '2026-10-01', to: '2026-10-31', today: '2026-10-31' }));
+  eq(before.rows.find(r => r.student.id === ada.id).owed.owed, 30,
+     'still outstanding — she has not delivered it yet');
+
+  const booked = (await w.SLP.db.getAll('sessions')).find(s => s.date === '2026-10-16');
+  const row = (await w.SLP.db.getAllBy('attendance', 'sessionId', booked.id))[0];
+  row.status = 'present';
+  await w.SLP.db.put('attendance', row);
+
+  const after = w.SLP.derive.attendanceGrid(await w.SLP.store.attendanceRange({
+    from: '2026-10-01', to: '2026-10-31', today: '2026-10-31' }));
+  eq(after.rows.find(r => r.student.id === ada.id).owed.owed, 0, 'settled once held');
+});
+
+test('a booked makeup appears on Today for its date', async () => {
+  const w = await loadApp();
+  const { ada } = await attSeed(w);
+  await w.SLP.store.bookMakeup({ date: '2026-10-16', startTime: '11:00',
+                                 endTime: '11:30', location: 'Room 4', studentId: ada.id });
+  const plan = await w.SLP.store.planForDate('2026-10-16');
+  eq(plan.length, 1, 'planForDate already folds in ad-hoc sessions');
+  eq(plan[0].students.map(s => s.name), ['Ada'], 'and it is her session');
+});
+
+test('deleting a makeup takes its rows with it', async () => {
+  const w = await loadApp();
+  const { ada, objective } = await attSeed(w);
+  const { session } = await w.SLP.store.bookMakeup({
+    date: '2026-10-16', startTime: '11:00', endTime: '11:30', studentId: ada.id });
+  const adHocSlot = { id: null, sessionId: session.id, startTime: '11:00',
+                      endTime: '11:30', studentIds: [ada.id], location: '' };
+  await w.SLP.store.saveNote({ dateStr: '2026-10-16', slot: adHocSlot,
+                               studentId: ada.id, text: 'x' });
+  await w.SLP.store.recordValue({ dateStr: '2026-10-16', slot: adHocSlot,
+                                  studentId: ada.id, objectiveId: objective.id,
+                                  fieldId: objective.fields[0].id, raw: '4' });
+
+  await w.SLP.store.deleteMakeup(session.id);
+
+  eq(await w.SLP.db.get('sessions', session.id), undefined, 'the session is gone');
+  // All four stores, not just the two that are easy to reach — the notes and datapoints
+  // loop is the half that was shipped untested, and a backup carries whatever it misses.
+  for (const store of ['attendance', 'notes', 'datapoints']) {
+    eq((await w.SLP.db.getAllBy(store, 'sessionId', session.id)).length, 0,
+       store + ' rows nothing can read again still ride in every backup she makes');
+  }
+});
+
+test('two makeups on one day do not write into each other', async () => {
+  const w = await loadApp();
+  const { ada, bo } = await attSeed(w);
+  // The collision ADR 0001 exists for: both sessions are slotless on the same date, so
+  // a lookup keyed on `slotId === null` cannot tell them apart and returns the first.
+  const first = await w.SLP.store.bookMakeup({ date: '2026-10-16', startTime: '11:00',
+                                               endTime: '11:30', studentId: ada.id });
+  const second = await w.SLP.store.bookMakeup({ date: '2026-10-16', startTime: '13:00',
+                                                endTime: '13:30', studentId: bo.id });
+  assert(first.session.id !== second.session.id, 'two bookings, two sessions');
+
+  await w.SLP.store.saveNote({
+    dateStr: '2026-10-16',
+    slot: { id: null, sessionId: second.session.id, startTime: '13:00', endTime: '13:30',
+            studentIds: [bo.id], location: '' },
+    studentId: bo.id, text: 'bo worked on /r/' });
+
+  const onFirst = await w.SLP.db.getAllBy('notes', 'sessionId', first.session.id);
+  const onSecond = await w.SLP.db.getAllBy('notes', 'sessionId', second.session.id);
+  eq(onFirst.length, 0, "Ada's session must not receive a note written against Bo's");
+  eq(onSecond.length, 1, 'the note belongs to the session it was written against');
+});
+
+test('an ad-hoc session cannot be addressed by date alone', async () => {
+  const w = await loadApp();
+  const { ada } = await attSeed(w);
+  await w.SLP.store.bookMakeup({ date: '2026-10-16', startTime: '11:00',
+                                 endTime: '11:30', studentId: ada.id });
+  let threw = null;
+  try {
+    await w.SLP.store.saveNote({
+      dateStr: '2026-10-16',
+      slot: { id: null, startTime: '11:00', endTime: '11:30', studentIds: [ada.id], location: '' },
+      studentId: ada.id, text: 'x' });
+  } catch (e) { threw = e; }
+  assert(threw, 'a slotless slot with no sessionId names no session — guessing is the bug');
+});

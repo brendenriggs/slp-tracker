@@ -315,3 +315,91 @@ test('marking a day the schedule never had still works', async () => {
   eq(attUiCells(w.document, ada, '2026-10-07')[0].dataset.state, 'present',
      'a session with no slot is still markable');
 });
+
+test('the owed column is where she books the makeup', async () => {
+  const w = await loadApp();
+  const { ada, slot } = await attUiSeed(w);
+  await w.SLP.store.setAttendance({ dateStr: ATT_UI_MONDAY, slot,
+                                    studentId: ada.id, status: 'missed' });
+  const doc = await attUiOpen(w, '2026-10-01', '2026-10-31');
+  const open = attUiRow(doc, ada).querySelector('.att-owed-open');
+  assert(open, 'that is where she is already looking when she asks who she owes');
+  open.click();
+  await w.SLP.ui.render();
+  assert(w.document.querySelector('#att-booking'), 'the booking form opened');
+});
+
+test('a student who is square offers nothing to book', async () => {
+  const w = await loadApp();
+  const { bo } = await attUiSeed(w);
+  const doc = await attUiOpen(w, '2026-10-01', '2026-10-31');
+  eq(attUiRow(doc, bo).querySelector('.att-owed-open'), null,
+     'the eye goes to the students carrying debt');
+});
+
+test('the proposed duration is one session, capped, not the whole debt', async () => {
+  const w = await loadApp();
+  const { ada, slot } = await attUiSeed(w);
+  for (const d of ['2026-10-05', '2026-10-12', '2026-10-19']) {
+    await w.SLP.store.setAttendance({ dateStr: d, slot, studentId: ada.id, status: 'missed' });
+  }
+  const doc = await attUiOpen(w, '2026-10-01', '2026-10-31');
+  attUiRow(doc, ada).querySelector('.att-owed-open').click();
+  await w.SLP.ui.render();
+  const start = w.document.querySelector('#att-book-start').value;
+  const end = w.document.querySelector('#att-book-end').value;
+  eq(w.SLP.derive.minutesOf({ startTime: start, endTime: end }), 30,
+     'owed 90, proposed 30 — the length of her regular session');
+});
+
+test('booking writes a makeup that shows on the grid with its own glyph', async () => {
+  const w = await loadApp();
+  const { ada, slot } = await attUiSeed(w);
+  await w.SLP.store.setAttendance({ dateStr: ATT_UI_MONDAY, slot,
+                                    studentId: ada.id, status: 'missed' });
+  const doc = await attUiOpen(w, '2026-10-01', '2026-10-31');
+  attUiRow(doc, ada).querySelector('.att-owed-open').click();
+  await w.SLP.ui.render();
+
+  const date = w.document.querySelector('#att-book-date');
+  date.value = '2026-10-07';                       // a Wednesday — not her day
+  date.dispatchEvent(new w.Event('change'));
+  w.document.querySelector('#att-book-save').click();
+  await w.SLP.ui.render();
+
+  const cells = attUiCells(w.document, ada, '2026-10-07');
+  eq(cells.length, 1, 'it appears on its own date');
+  eq(cells[0].dataset.makeup, 'true', 'a makeup must never read as a routine session');
+  eq(cells[0].dataset.state, 'unmarked', 'booked, not yet held');
+});
+
+test('a booked makeup can be deleted, behind a confirmation', async () => {
+  const w = await loadApp();
+  const { ada } = await attUiSeed(w);
+  await w.SLP.store.bookMakeup({ date: '2026-10-07', startTime: '11:00',
+                                 endTime: '11:30', studentId: ada.id });
+  await attUiOpen(w, '2026-10-05', '2026-10-09');
+  const pop = await attUiOpenCell(w, ada, '2026-10-07');
+
+  const del = pop.querySelector('#att-delete-makeup');
+  assert(del, 'a mis-booking must be undoable');
+  del.click();
+  await w.SLP.ui.render();
+  const confirm = w.document.querySelector('#att-delete-makeup-confirm');
+  assert(confirm, 'armed first — one click must not destroy a session');
+  confirm.click();
+  await w.SLP.ui.render();
+
+  eq(attUiCells(w.document, ada, '2026-10-07').length, 0, 'gone from the grid');
+});
+
+test('a regular session offers no delete', async () => {
+  const w = await loadApp();
+  const { ada, slot } = await attUiSeed(w);
+  await w.SLP.store.setAttendance({ dateStr: ATT_UI_MONDAY, slot,
+                                    studentId: ada.id, status: 'present' });
+  await attUiOpen(w, '2026-10-05', '2026-10-09');
+  const pop = await attUiOpenCell(w, ada, ATT_UI_MONDAY);
+  eq(pop.querySelector('#att-delete-makeup'), null,
+     'deleting a scheduled session is the Schedule tab’s job, not this one’s');
+});

@@ -547,12 +547,25 @@ SLP.store = (() => {
     return new Date(y, mo - 1, d).getDay();
   }
 
+  // A slotless session has no template to be found by, so there is no honest answer
+  // here — `find(s => s.slotId === null)` would return whichever ad-hoc session on this
+  // date happens to be first. Ad-hoc sessions are addressed by their own id instead.
   async function findSession(dateStr, slotId) {
+    if (!slotId) return null;
     const onDate = await db.getAllBy('sessions', 'date', dateStr);
     return onDate.find(s => s.slotId === slotId) || null;
   }
 
   async function ensureSession(dateStr, slot) {
+    // An ad-hoc session is addressed by id. planForDate puts it on the synthetic slot
+    // it builds, and bookMakeup returns it; there is nothing to create here, because a
+    // session with no slot cannot be conjured from a date the way a recurring one can.
+    if (!slot.id) {
+      if (!slot.sessionId) throw new Error('an ad-hoc session must be addressed by sessionId');
+      const adHoc = await db.get('sessions', slot.sessionId);
+      if (!adHoc) throw new Error('unknown session: ' + slot.sessionId);
+      return adHoc;
+    }
     const existing = await findSession(dateStr, slot.id);
     if (existing) return existing;
     const session = m.session({
@@ -742,7 +755,7 @@ SLP.store = (() => {
       for (const slot of slots) entries.push(await build(slot, await findSession(dateStr, slot.id)));
       for (const session of adHoc) {
         entries.push(await build(
-          { id: null, dayOfWeek: dow, startTime: session.startTime,
+          { id: null, sessionId: session.id, dayOfWeek: dow, startTime: session.startTime,
             endTime: session.endTime, studentIds: session.roster, location: session.location },
           session));
       }
@@ -830,6 +843,36 @@ SLP.store = (() => {
         written.push(row);
       }
       return written;
+    },
+
+    // A one-off booked outside the recurring schedule. It is a session with no slot,
+    // which planForDate already folds into Today — so it appears there with no further
+    // work, and never on Schedule, which is the recurring week.
+    //
+    // The row is written with a null status on purpose: `present` here would credit
+    // the debt to zero the instant she books, before the session has happened. The row
+    // exists to carry isMakeup; charting it on Today fills the outcome in.
+    async bookMakeup({ date, startTime, endTime, location = '', studentId }) {
+      const session = m.session({ date, slotId: null, startTime, endTime, location,
+                                  roster: [studentId] });
+      await db.put('sessions', session);
+      const attendance = m.attendance({
+        sessionId: session.id, studentId, status: null,
+        participation: 'scheduled', isMakeup: true });
+      await db.put('attendance', attendance);
+      return { session, attendance };
+    },
+
+    // Same reasoning as deleteObjective: a session removed without its rows leaves
+    // records nothing can ever read again — off the screen, but still in every backup
+    // she makes afterwards.
+    async deleteMakeup(sessionId) {
+      for (const store of ['attendance', 'notes', 'datapoints']) {
+        for (const row of await db.getAllBy(store, 'sessionId', sessionId)) {
+          await db.del(store, row.id);
+        }
+      }
+      await db.del('sessions', sessionId);
     },
 
     async saveNote({ dateStr, slot, studentId, text }) {
@@ -1016,6 +1059,16 @@ SLP.derive = (() => {
     return { from: y + '-' + pad2(mo) + '-01', to: y + '-' + pad2(mo) + '-' + pad2(last) };
   }
 
+  // A student owed 90 minutes gets a 30-minute makeup proposed, not a 90-minute one:
+  // she settles a debt over several sessions, not in one marathon a child could not
+  // sit through. The cap is that student's own longest regular session — someone
+  // else's two-hour block is not a ceiling on hers.
+  function makeupDuration(owedMinutes, slots, studentId) {
+    const mine = (slots || []).filter(s => (s.studentIds || []).includes(studentId));
+    const cap = mine.reduce((max, s) => Math.max(max, minutesOf(s)), 0);
+    return cap ? Math.min(owedMinutes, cap) : owedMinutes;
+  }
+
   // Her paper form, with the arithmetic done. Pure: hand it the output of
   // store.attendanceRange and it returns everything on screen — no IndexedDB, no
   // await, so the whole page is testable without the harness opening a database.
@@ -1183,7 +1236,8 @@ SLP.derive = (() => {
   }
 
   return { studentState, chartedCount, objectivesCharted, series, mastery, pair, minutesOf,
-           makeupBalance, attendancePct, attendanceGrid, schools, canonicalSchool, monthRange };
+           makeupBalance, attendancePct, attendanceGrid, schools, canonicalSchool, monthRange,
+           makeupDuration };
 })();
 
 // ============================================================
@@ -2478,7 +2532,8 @@ SLP.ui = (() => {
   // Survives re-render within the tab, like ui.schedule's draft. The range is null
   // until the first render so it can default to whatever month she opens it in.
   const ui = { search: '', gradeFilter: '', schoolFilter: '', range: null,
-               marking: null };   // { studentId, date, sessionId, slotId }
+               marking: null,   // { studentId, date, sessionId, slotId, isMakeup }
+               booking: null, armedDelete: null };
 
   // Glyph AND colour, never colour alone: her highlighter system does not survive a
   // colourblind reader or a grayscale print, and these go home in a folder.
@@ -2535,7 +2590,7 @@ SLP.ui = (() => {
       'on:click': () => {
         ui.marking = {
           studentId: row.student.id, studentName: row.student.name, date,
-          sessionId: cell.sessionId, slotId: cell.slotId,
+          sessionId: cell.sessionId, slotId: cell.slotId, isMakeup: cell.isMakeup,
         };
         SLP.ui.render();
       },
@@ -2604,7 +2659,17 @@ SLP.ui = (() => {
                   text: pctText(row.pct) }),
         h('td', { class: 'att-owed' },
           row.owed.owed
-            ? h('span', { class: 'att-owed-debt', text: '−' + row.owed.owed + ' min' })
+            ? h('button', {
+                class: 'att-owed-open linkish att-owed-debt', type: 'button',
+                text: '−' + row.owed.owed + ' min',
+                'aria-label': 'Book a makeup for ' + row.student.name +
+                              ', owes ' + row.owed.owed + ' minutes',
+                'on:click': async () => {
+                  ui.marking = null;
+                  ui.booking = { student: row.student, owed: row.owed.owed };
+                  await SLP.ui.render();
+                },
+              })
             : h('span', { text: '—' })));
       if (!ui.marking || ui.marking.studentId !== row.student.id) return [tr];
       return [tr, h('tr', { class: 'att-popover-row' },
@@ -2616,38 +2681,22 @@ SLP.ui = (() => {
         h('thead', {}, monthRow, head), h('tbody', {}, body)));
   }
 
-  // A slot object is what setAttendance wants, and the cell may know only a sessionId
-  // (an ad-hoc session has no slot at all). ensureSession is keyed on slot.id, so a
-  // session with no slot needs its own path: write straight to the row instead.
+  // A slot object is what setAttendance/setSessionAttendance want; the cell may know
+  // only a sessionId (an ad-hoc session has no slot at all). Step 4 taught ensureSession
+  // to resolve a session by id, so a slotless cell now hands it the same synthetic-slot
+  // shape planForDate builds — { id: null, sessionId } — and the store owns the roster
+  // walk and stickiness rule exactly as it does for a scheduled session. This used to
+  // re-implement both here; now there is one place that knows how a sweep works.
   async function markCell(target, status, wholeSession) {
     const { date, slotId, sessionId, studentId } = target;
-    if (slotId) {
-      const slot = (await SLP.store.listSlots()).find(s => s.id === slotId);
-      if (slot) {
-        if (wholeSession) {
-          await SLP.store.setSessionAttendance({ dateStr: date, slot, status });
-        } else {
-          await SLP.store.setAttendance({ dateStr: date, slot, studentId, status });
-        }
-        return;
-      }
-    }
-    // No slot: a one-off session. Its row is written directly, and a session-wide
-    // sweep walks the roster the same way store.setSessionAttendance does.
-    if (!sessionId) return;
-    const session = await SLP.db.get('sessions', sessionId);
-    if (!session) return;
-    const rows = await SLP.db.getAllBy('attendance', 'sessionId', sessionId);
-    const targets = wholeSession ? session.roster : [studentId];
-    for (const id of targets) {
-      const prior = rows.find(r => r.studentId === id);
-      if (wholeSession && prior && prior.status && prior.status !== 'present') continue;
-      const row = prior || SLP.model.attendance({
-        sessionId, studentId: id, status,
-        participation: session.roster.includes(id) ? 'scheduled' : 'added' });
-      row.status = status;
-      row.updatedAt = SLP.model.now();
-      await SLP.db.put('attendance', row);
+    const slot = slotId
+      ? (await SLP.store.listSlots()).find(s => s.id === slotId)
+      : (sessionId ? { id: null, sessionId } : null);
+    if (!slot) return;
+    if (wholeSession) {
+      await SLP.store.setSessionAttendance({ dateStr: date, slot, status });
+    } else {
+      await SLP.store.setAttendance({ dateStr: date, slot, studentId, status });
     }
   }
 
@@ -2684,7 +2733,102 @@ SLP.ui = (() => {
         choice('missed', true),
         choice('cancelled', true)),
       h('button', { class: 'linkish', id: 'att-popover-close', type: 'button', text: 'Cancel',
-                    'on:click': async () => { ui.marking = null; await SLP.ui.render(); } }));
+                    'on:click': async () => { ui.marking = null; await SLP.ui.render(); } }),
+      ui.marking.isMakeup && ui.marking.sessionId
+        ? h('div', {},
+            h('hr', {}),
+            ui.armedDelete === ui.marking.sessionId
+              ? h('div', {},
+                  h('p', { class: 'muted', text: 'Delete this booked makeup?' }),
+                  h('button', {
+                    class: 'danger', id: 'att-delete-makeup-confirm', type: 'button',
+                    text: 'Delete it',
+                    'on:click': async () => {
+                      const id = ui.marking.sessionId;
+                      ui.marking = null; ui.armedDelete = null;
+                      await SLP.store.deleteMakeup(id);
+                      await SLP.ui.render();
+                    },
+                  }),
+                  h('button', { class: 'linkish', type: 'button', text: 'Keep it',
+                                'on:click': async () => { ui.armedDelete = null;
+                                                          await SLP.ui.render(); } }))
+              : h('button', {
+                  class: 'linkish', id: 'att-delete-makeup', type: 'button',
+                  text: 'Delete this makeup',
+                  'on:click': async () => { ui.armedDelete = ui.marking.sessionId;
+                                            await SLP.ui.render(); },
+                }))
+        : null);
+  }
+
+  // Nudged to the next weekday so the default is a day she is actually in school.
+  function nextWeekday(fromStr) {
+    const [y, mo, d] = fromStr.split('-').map(Number);
+    const cur = new Date(y, mo - 1, d);
+    do { cur.setDate(cur.getDate() + 1); } while (cur.getDay() === 0 || cur.getDay() === 6);
+    const p = n => String(n).padStart(2, '0');
+    return cur.getFullYear() + '-' + p(cur.getMonth() + 1) + '-' + p(cur.getDate());
+  }
+
+  const addMinutes = (time, minutes) => {
+    const [hh, mm] = time.split(':').map(Number);
+    const total = hh * 60 + mm + minutes;
+    const p = n => String(n).padStart(2, '0');
+    return p(Math.floor(total / 60) % 24) + ':' + p(total % 60);
+  };
+
+  // Her own usual time is the better guess than a number we invented: a makeup at the
+  // hour she already sees this child is the one most likely to be free in both their
+  // timetables. 11:00 survives only as the fallback for a student with no slot at all.
+  // Open question 4 in docs/OPEN-QUESTIONS.md — she may well fit makeups into a specific
+  // free period instead, in which case this becomes a fixed time again.
+  function usualStart(slots, studentId) {
+    const mine = (slots || [])
+      .filter(s => (s.studentIds || []).includes(studentId) && s.startTime)
+      .map(s => s.startTime)
+      .sort();
+    return mine[0] || '11:00';
+  }
+
+  function bookingForm(slots) {
+    if (!ui.booking) return null;
+    const { student, owed } = ui.booking;
+    const minutes = SLP.derive.makeupDuration(owed, slots, student.id);
+    const start = usualStart(slots, student.id);
+
+    const date = h('input', { type: 'date', id: 'att-book-date',
+                              value: nextWeekday(SLP.ui.todayStr()) });
+    const from = h('input', { type: 'time', id: 'att-book-start', value: start });
+    const to = h('input', { type: 'time', id: 'att-book-end',
+                            value: addMinutes(start, minutes) });
+    const where = h('input', { type: 'text', id: 'att-book-where', placeholder: 'Where' });
+
+    return h('section', { class: 'panel', id: 'att-booking' },
+      h('h2', { text: 'Book a makeup · ' + student.name }),
+      h('p', { class: 'muted', text: 'owes ' + owed + ' min' }),
+      h('div', { class: 'row-form' },
+        'Date', date, 'Time', from, '–', to, 'Where', where,
+        h('button', {
+          class: 'primary', id: 'att-book-save', type: 'button', text: 'Book it',
+          'on:click': async () => {
+            if (!date.value || !from.value || !to.value) {
+              SLP.ui.toast('A makeup needs a date and a time.', 'warn'); return;
+            }
+            if (SLP.derive.minutesOf({ startTime: from.value, endTime: to.value }) <= 0) {
+              // Word for word what the schedule form says at index.html:1302. The same
+              // mistake must not get two different sentences in one app.
+              SLP.ui.toast('The end time must be after the start.', 'warn'); return;
+            }
+            await SLP.store.bookMakeup({
+              date: date.value, startTime: from.value, endTime: to.value,
+              location: where.value.trim(), studentId: student.id });
+            ui.booking = null;
+            await SLP.ui.render();
+          },
+        }),
+        h('button', { class: 'linkish', id: 'att-book-cancel', type: 'button', text: 'Cancel',
+                      'on:click': async () => { ui.booking = null; await SLP.ui.render(); } })));
   }
 
   SLP.ui.views.attendance = async (root) => {
@@ -2718,7 +2862,10 @@ SLP.ui = (() => {
     // left in it drops off the list the same way it does on the Students tab.
     const filters = SLP.ui.studentFilters({
       idPrefix: 'attendance', state: ui, students: data.students,
-      onChange: () => SLP.ui.render(),
+      // A filter that hides the student whose popover is open leaves ui.marking
+      // pointing at a row no longer on screen — harmless (no wrong write is
+      // reachable from it) but untidy, and it lingers until another cell is clicked.
+      onChange: () => { ui.marking = null; SLP.ui.render(); },
     });
     const shown = new Set(filters.shown.map(s => s.id));
 
@@ -2729,6 +2876,7 @@ SLP.ui = (() => {
       h('h2', { text: 'Attendance' }),
       h('div', { class: 'row-form' }, 'From', from, 'to', to),
       filters.el,
+      bookingForm(data.slots),
       invalidRange
         ? h('p', { class: 'empty', id: 'attendance-range-error',
                    text: 'The end date must be after the start.' })

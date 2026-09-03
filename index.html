@@ -741,6 +741,41 @@ SLP.store = (() => {
       return row;
     },
 
+    // "I missed this whole session" is a bulk write, not a second field. A session-level
+    // status plus per-student rows can contradict each other, and something then has to
+    // arbitrate — a bug generator and an extra concept for a reader to hold. One source
+    // of truth.
+    //
+    // A mark she already made by hand outranks the sweep, which is the same stickiness
+    // rule deriveAttendance applies above. It is also the arithmetically right answer:
+    // a child who was not there generates no debt, so sweeping `missed` over an `absent`
+    // would invent minutes she does not owe. The per-cell popover is the way to change
+    // one deliberately.
+    async setSessionAttendance({ dateStr, slot, status }) {
+      if (status !== null && !m.ATTENDANCE_STATUSES.includes(status)) {
+        throw new Error('unknown attendance status: ' + status);
+      }
+      const session = await ensureSession(dateStr, slot);
+      const existing = {};
+      for (const r of await db.getAllBy('attendance', 'sessionId', session.id)) {
+        existing[r.studentId] = r;
+      }
+      const written = [];
+      for (const studentId of session.roster) {
+        const prior = existing[studentId];
+        if (prior && prior.status && prior.status !== 'present') continue;   // hers
+        const row = prior || m.attendance({
+          sessionId: session.id, studentId, status,
+          participation: 'scheduled',
+        });
+        row.status = status;
+        row.updatedAt = m.now();
+        await db.put('attendance', row);
+        written.push(row);
+      }
+      return written;
+    },
+
     async saveNote({ dateStr, slot, studentId, text }) {
       const session = await ensureSession(dateStr, slot);
       const existing = await rowFor('notes', session.id, studentId);

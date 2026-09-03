@@ -150,3 +150,57 @@ test('attendanceRange does not fan out one query per session', async () => {
   assert(calls <= 6, 'expected a handful of bulk reads, got ' + calls +
                      ' — the per-session fan-out is back');
 });
+
+test('marking a session writes every student on its roster', async () => {
+  const w = await loadApp();
+  const { ada, bo, slot } = await attSeed(w);
+  const written = await w.SLP.store.setSessionAttendance({
+    dateStr: ATT_MONDAY, slot, status: 'missed' });
+  eq(written.length, 2, 'both students on the roster');
+
+  const session = await w.SLP.store.ensureSession(ATT_MONDAY, slot);
+  const rows = await w.SLP.db.getAllBy('attendance', 'sessionId', session.id);
+  eq(rows.map(r => r.status).sort(), ['missed', 'missed'], 'and both are on file');
+  eq(rows.filter(r => r.studentId === ada.id).length, 1, 'Ada, once');
+  eq(rows.filter(r => r.studentId === bo.id).length, 1, 'Bo, once');
+});
+
+test('a session-wide sweep does not overwrite a mark she made by hand', async () => {
+  const w = await loadApp();
+  const { ada, bo, slot } = await attSeed(w);
+  await w.SLP.store.setAttendance({ dateStr: ATT_MONDAY, slot,
+                                    studentId: ada.id, status: 'absent' });
+
+  await w.SLP.store.setSessionAttendance({ dateStr: ATT_MONDAY, slot, status: 'missed' });
+
+  const session = await w.SLP.store.ensureSession(ATT_MONDAY, slot);
+  const rows = await w.SLP.db.getAllBy('attendance', 'sessionId', session.id);
+  const adaRow = rows.find(r => r.studentId === ada.id);
+  const boRow = rows.find(r => r.studentId === bo.id);
+  eq(adaRow.status, 'absent',
+     'she said Ada was not there; a sweep must not blame the paperwork on the child');
+  eq(boRow.status, 'missed', 'Bo, who had no mark, takes the sweep');
+});
+
+test('a bulk sweep is refused an unknown status too', async () => {
+  const w = await loadApp();
+  const { slot } = await attSeed(w);
+  await throws(() => w.SLP.store.setSessionAttendance({
+    dateStr: ATT_MONDAY, slot, status: 'snowday' }), 'same gate as the single write');
+});
+
+test('a session-wide mark creates no debt for a child who was absent', async () => {
+  const w = await loadApp();
+  const { ada, bo, slot } = await attSeed(w);
+  await w.SLP.store.setAttendance({ dateStr: ATT_MONDAY, slot,
+                                    studentId: ada.id, status: 'absent' });
+  await w.SLP.store.setSessionAttendance({ dateStr: ATT_MONDAY, slot, status: 'missed' });
+
+  const data = await w.SLP.store.attendanceRange({ from: '2026-10-01', to: '2026-10-31',
+                                                   today: '2026-10-31' });
+  const grid = w.SLP.derive.attendanceGrid(data);
+  const adaRow = grid.rows.find(r => r.student.id === ada.id);
+  const boRow = grid.rows.find(r => r.student.id === bo.id);
+  eq(adaRow.owed.owed, 0, 'a child who stayed home is owed nothing');
+  eq(boRow.owed.owed, 30, 'Bo turned up to a session that did not happen');
+});

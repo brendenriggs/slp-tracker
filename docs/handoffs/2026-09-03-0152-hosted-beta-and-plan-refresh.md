@@ -58,15 +58,11 @@ data-split.
   were previously living only in handoff prose. Put future non-spec action items there
   rather than in a handoff, where they rot.
 
-## Her new request — captured, deliberately not processed
+## Her new request — captured, not yet worked
 
-**A schedule slot's time cannot be edited.** Her note is quoted verbatim in
-`docs/BACKLOG.md`. Read it there, and read it before forming a view — the entry is
-deliberately free of anyone else's analysis so the next session starts from her words.
-
-**Do not investigate it, and do not reason about the fix, until Brenden says to.** He
-asked for it recorded, not worked. Capture means capture: her words, unexamined. If you
-catch yourself opening the schedule code to see how bad it is, that is the thing to stop.
+**A schedule slot's time cannot be edited.** Her note is quoted verbatim and unanalyzed in
+`docs/BACKLOG.md`; that entry also carries the process for working it. Start from her
+words.
 
 ## The attendance plan was stale; it is now accurate
 

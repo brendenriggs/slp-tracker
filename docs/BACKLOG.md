@@ -18,9 +18,8 @@ Her note, verbatim:
 >
 > I can't go and fix that without deleting the session and then have to retype the notes
 
-Nothing above has been investigated, and that is deliberate — the note is recorded here
-exactly as it arrived so that whoever picks it up starts from her words rather than from
-someone else's reading of them.
+Recorded exactly as it arrived, unanalyzed, so that whoever works it starts from her words
+rather than from someone else's reading of them.
 
 Process it the way the last two of her requests were processed, which worked:
 

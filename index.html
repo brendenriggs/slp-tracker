@@ -1136,11 +1136,22 @@ SLP.ui = (() => {
   // thrown back to the header on every click. Staying put is right for a re-render in
   // place; it is wrong for arriving somewhere new, which should start at the top. The
   // route says which of the two just happened.
+  //
+  // The date belongs in that key: paging Today to another day is arriving somewhere new,
+  // and ui.today already judges it that way when it clears the expanded cards. Left out,
+  // she paged to the next day and landed mid-page, reading a different child than the one
+  // she left off on.
+  //
+  // Note what is deliberately NOT here: a rule for the page shrinking under the saved
+  // offset. The browser clamps, and clamping is right — "go to the top when the offset no
+  // longer fits" would throw her to the header every time she collapsed a card while
+  // reading the end of a long day. Where the shrink is drastic the clamp lands at 0 on its
+  // own. Both cases are pinned in tests/scroll-restore.test.js.
   let lastPlace = null;
 
   async function doRender() {
     const app = $('#app');
-    const place = route.tab + '/' + (route.studentId || '');
+    const place = route.tab + '/' + (route.studentId || '') + '/' + (route.date || '');
     const y = place === lastPlace ? window.scrollY : 0;
     lastPlace = place;
     clear(app);

@@ -66,16 +66,16 @@ Worth stating plainly, because it substantially reduces the work and because a r
 would otherwise assume all of this is new:
 
 - **`model.attendance` already carries `status`, `participation`, and `isMakeup`.**
-  `isMakeup` is declared at `slp-tracker.html:443` and referenced **nowhere else in the
+  `isMakeup` is declared at `index.html:456` and referenced **nowhere else in the
   codebase.** This design is what it was waiting for.
 - **`derive.studentState` already advertises the wider vocabulary** in a comment —
   `absent / excused / cancelled` — though only `absent` is ever written today.
 - **`session` snapshots `startTime` / `endTime`** at materialization, so session duration
   is derivable and immune to a later edit of the underlying slot. No minutes field needed.
-- **`store.planForDate` already folds in ad-hoc sessions** (`slp-tracker.html:577`,
-  `605–610`) — sessions with `slotId: null` render on Today already. Only the *creation*
-  path is missing.
-- **`store.setAttendance`** (`slp-tracker.html:629`) already takes exactly
+- **`store.planForDate` already folds in ad-hoc sessions** (`index.html:628`, `641–646`) —
+  sessions with `slotId: null` render on Today already. Only the *creation* path is
+  missing.
+- **`store.setAttendance`** (`index.html:685`) already takes exactly
   `{ dateStr, slot, studentId, status }`. The grid becomes a second caller of a working
   write path rather than a new one.
 
@@ -109,7 +109,7 @@ student on the session roster. **There is no session-level status field.**
 This is deliberate. A session flag *plus* per-student rows can contradict each other, and
 something then has to arbitrate — which is a bug generator and an extra concept for a
 reader to hold. One source of truth, and the existing stickiness rule already protects
-these marks: `deriveAttendance` (`slp-tracker.html:495`) returns any explicit non-`present`
+these marks: `deriveAttendance` (`index.html:506`) returns any explicit non-`present`
 mark untouched, so data entry never silently overwrites her judgment.
 
 ### Makeups
@@ -168,7 +168,7 @@ made up sits at 8 offered out of 10 rather than 7 out of 9, and the percentage c
 exceed 100%.
 
 **Uncharted sessions are excluded, and shown.** `deriveAttendance`
-(`slp-tracker.html:492`) writes no row at all for a session with nothing entered against it,
+(`index.html:506`) writes no row at all for a session with nothing entered against it,
 so uncharted is a real third state and not a silent `present`. Excluding it is the only
 honest option — but excluding it *quietly* lets a quarter with three charted sessions out of
 thirty read as a confident 100%. So the count travels with the number, and the figure is

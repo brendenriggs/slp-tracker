@@ -66,7 +66,7 @@ that it be recorded and *not* worked on, and the entry is deliberately free of a
 else's analysis so the next session starts from her words.
 
 This session overstepped that once: it went and confirmed the report against the code and
-wrote a diagnosis into the backlog. That was removed in `<this handoff's commit>`. If you
+wrote a diagnosis into the backlog. That was removed in `38fe57b`. If you
 find yourself reasoning about the fix before Brenden has asked her anything, stop.
 
 ## The attendance plan was stale; it is now accurate

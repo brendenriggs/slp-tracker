@@ -48,6 +48,12 @@ async timing, and fixture size**. So verification is not just the suite.
   a detail of the test; it is the thing being tested.
 - **Screenshot and look at it, at the scroll position she would actually be at.** A capture at
   scroll 0 cannot answer a question about something that opens beside a mid-list row.
+- **Give every CDP driver its own port and kill its process group.** Killing the pid node
+  holds leaves the browser process alive and still listening, so the next run's
+  `waitForEndpoint` connects to the *previous* browser — profile, database and all — while
+  its own Chrome silently fails to bind the port. Three runs of one driver seeded 49, then
+  98, then 147 students while every log line still said 49. A seeded-fixture claim is only
+  as good as the browser it was made in: print the row count from the page and read it.
 - **Drive Chrome over CDP and capture only after a readiness marker is set.** `--screenshot`
   fires at the page's `load` event, which precedes IndexedDB seeding and the render, so a cold
   capture comes out blank on its own — `--virtual-time-budget` and `--dump-dom` make it worse
@@ -104,6 +110,15 @@ here.
   the computed colour, not the class, and check the contrast of anything deliberately
   understated. The attendance grid's dots and unmarked squares sat below the threshold of
   vision for two releases this way.
+- **A contrast floor cannot see a dropped rule.** A stray `*/` invalidated the whole
+  `.att-slide` block; the buttons fell back to the browser default — black on white — and
+  sailed through a `>= 4.5:1` assertion at 21:1, 12px wide. A floor only proves the colour
+  is not too quiet. Assert a size too, with `getBoundingClientRect()`, or the fallback
+  passes as the design.
+- **The grid is students down, days across. Transposing it is rejected** — Brenden,
+  2026-09-04, after seeing that her own sheet runs the other way. Her log is the reference
+  for how a mark should *read*, not for how the grid is laid out. Do not re-open it; the
+  per-student column colour from the same photo is still only deferred.
 - **A state rule has to outscore the zebra rule, not just follow it.** The grid stripes
   rows with `.att-grid tbody tr:nth-child(even) td` — specificity (0,2,2). Any hover,
   selection or highlight written as `.att-grid .att-thing` is (0,2,0) and loses on every

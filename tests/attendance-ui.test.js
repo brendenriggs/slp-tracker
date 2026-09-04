@@ -627,3 +627,152 @@ test('a fully charted student-page percentage is not styled provisional', async 
   assert(style.fontStyle !== 'italic',
      'flagging a complete number would make the flag mean nothing — got ' + style.fontStyle);
 });
+
+// ----------------------------------------------------------------------
+// Legibility of the quiet glyphs.
+//
+// Both of these were invisible: the not-scheduled dot sat at var(--line)
+// (#d8d8d8 on white — about 1.4:1, below the threshold of vision, where WCAG's
+// floor for a non-text graphic is 3:1), and ▫ U+25AB is literally named WHITE
+// SMALL SQUARE — a hollow outline with almost no ink.
+//
+// Fixing the square meant splitting it first. attendanceGrid emits state
+// 'unmarked' for two unrelated things: a past session she has not recorded (a
+// to-do) and a future scheduled slot (nothing to do yet). Drawing both louder
+// would turn every future month into a wall of urgent-looking boxes. So the
+// split is presentational — same stored data, same state, same arithmetic —
+// and only the past half gets weight.
+//
+// These assert the COMPUTED colour, not the class. A class is present just as
+// happily against a rule that styles nothing; tests/backup.test.js:152-168 is
+// the house convention for the same trap in its throwing form.
+
+function attUiRgb(rgb) {
+  return rgb.match(/\d+(\.\d+)?/g).slice(0, 3).map(Number);
+}
+function attUiLuminance(rgb) {
+  const [r, g, b] = attUiRgb(rgb).map(v => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+// The cell itself is transparent, so the colour it is read against belongs to
+// whichever ancestor actually paints. Walking up is the only honest way to get it.
+function attUiPaintedBg(w, el) {
+  for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+    const bg = w.getComputedStyle(n).backgroundColor;
+    const parts = attUiRgb(bg);
+    const alpha = bg.startsWith('rgba') ? Number(bg.match(/[\d.]+/g)[3]) : 1;
+    if (parts.length === 3 && alpha > 0) return bg;
+  }
+  return 'rgb(255, 255, 255)';
+}
+function attUiContrast(w, el) {
+  const fg = attUiLuminance(w.getComputedStyle(el).color);
+  const bg = attUiLuminance(attUiPaintedBg(w, el));
+  const hi = Math.max(fg, bg), lo = Math.min(fg, bg);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+// A past Monday and a future one, either side of the pinned 2026-10-31.
+const ATT_UI_PAST_MON = '2026-10-26';
+const ATT_UI_FUTURE_MON = '2026-11-02';
+
+test('the not-scheduled dot is faint but actually visible', async () => {
+  const w = await loadApp();
+  const { ada } = await attUiSeed(w);
+  const doc = await attUiOpen(w, '2026-10-05', '2026-10-09');
+  const dot = attUiRow(doc, ada)
+    .querySelector('td.att-day[data-date="2026-10-06"] .att-none');
+  assert(dot, 'Tuesday is not her day, and says so with a dot');
+
+  const ratio = attUiContrast(w, dot);
+  assert(ratio >= 3,
+     'it is a rail her eye tracks along a 30-column row — below 3:1 it is not a ' +
+     'quiet mark, it is an absent one. Got ' + ratio.toFixed(2) + ':1');
+  assert(ratio < 5,
+     'and it must stay quieter than the marks that carry meaning, since most of ' +
+     'the grid is unscheduled. Got ' + ratio.toFixed(2) + ':1');
+});
+
+test('a past session she has not recorded draws a box with real weight', async () => {
+  const w = await loadApp();
+  const { ada } = await attUiSeed(w);
+  const doc = await attUiOpen(w, ATT_UI_PAST_MON, ATT_UI_PAST_MON);
+  const cell = attUiCells(doc, ada, ATT_UI_PAST_MON)[0];
+
+  eq(cell.dataset.state, 'unmarked', 'the stored state is untouched by the split');
+  eq(cell.dataset.future, undefined, 'this one is behind her, so it is a to-do');
+  eq(cell.textContent, '□', 'the larger square — U+25AB has almost no ink');
+  assert(attUiContrast(w, cell) >= 4.5,
+     'she has to see the thing she still owes a record for — got ' +
+     attUiContrast(w, cell).toFixed(2) + ':1');
+});
+
+test('a session still to come stays quiet', async () => {
+  const w = await loadApp();
+  const { ada } = await attUiSeed(w);
+  const doc = await attUiOpen(w, ATT_UI_FUTURE_MON, ATT_UI_FUTURE_MON);
+  const cell = attUiCells(doc, ada, ATT_UI_FUTURE_MON)[0];
+
+  eq(cell.dataset.state, 'unmarked', 'same state as the past one — only the drawing differs');
+  eq(cell.dataset.future, 'true', 'it has not happened yet');
+  eq(cell.textContent, '▫', 'the small square, deliberately');
+  assert(attUiContrast(w, cell) < 4.5,
+     'a session that has not happened is not a task she is behind on, and a month ' +
+     'of them must not read as a wall of debts — got ' +
+     attUiContrast(w, cell).toFixed(2) + ':1');
+});
+
+test('a future session is still clickable, because she may chart ahead', async () => {
+  const w = await loadApp();
+  const { ada } = await attUiSeed(w);
+  const doc = await attUiOpen(w, ATT_UI_FUTURE_MON, ATT_UI_FUTURE_MON);
+  const cell = attUiCells(doc, ada, ATT_UI_FUTURE_MON)[0];
+  assert(!cell.disabled, 'drawing it quietly is not the same as taking it away');
+});
+
+test('a makeup takes whichever square its own side of today calls for', async () => {
+  // The split reaches compositions too: an unheld makeup behind her is as much a to-do as
+  // any other unrecorded session. This is why the legend gives the superscript as a rule
+  // instead of spelling out a combination — "▫ᴹ makeup booked" became wrong for half the
+  // cells the moment `unmarked` split in two.
+  // Wednesdays, either side of the pinned 2026-10-31, so neither lands on the Monday
+  // slot and each date carries exactly one cell. bookMakeup is how a makeup is really
+  // made; setAttendance has no isMakeup and would quietly seed an ordinary session.
+  const PAST_WED = '2026-10-28', FUTURE_WED = '2026-11-04';
+  const w = await loadApp();
+  const { ada } = await attUiSeed(w);
+  for (const date of [PAST_WED, FUTURE_WED]) {
+    await w.SLP.store.bookMakeup({ date, startTime: '11:00', endTime: '11:30',
+                                   studentId: ada.id });
+  }
+  const doc = await attUiOpen(w, ATT_UI_PAST_MON, FUTURE_WED);
+
+  const past = attUiCells(doc, ada, PAST_WED)[0];
+  const future = attUiCells(doc, ada, FUTURE_WED)[0];
+  eq(past.dataset.makeup, 'true', 'still a makeup');
+  eq(future.dataset.makeup, 'true', 'still a makeup');
+  eq(past.textContent, '□M', 'behind her and unrecorded — the to-do square, plus the M');
+  eq(future.textContent, '▫M', 'not yet held — the quiet square, plus the M');
+});
+
+test('the legend is built from the glyph table, so it cannot drift from the grid', async () => {
+  // It used to hardcode all nine glyphs as string literals beside the table that
+  // defines them. Changing one silently left the legend describing a grid that no
+  // longer existed — which is exactly what this change would have done.
+  const w = await loadApp();
+  const { ada } = await attUiSeed(w);
+  const doc = await attUiOpen(w, ATT_UI_PAST_MON, ATT_UI_FUTURE_MON);
+  const legend = doc.querySelector('#attendance-legend');
+
+  for (const cell of doc.querySelectorAll('.att-cell, .att-none')) {
+    const glyph = cell.textContent.replace(/M$/, '');
+    assert(legend.textContent.includes(glyph),
+       'the grid drew ' + glyph + ' and the legend never mentions it');
+  }
+  for (const word of ['held', 'absent', 'missed', 'cancelled', 'makeup', 'not scheduled']) {
+    assert(legend.textContent.toLowerCase().includes(word), 'legend names ' + word);
+  }
+});

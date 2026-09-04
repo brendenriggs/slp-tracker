@@ -97,6 +97,18 @@ here.
   load-bearing, not decoration: leave it off and the control silently loses the keyboard on
   every keystroke. Do not solve this at a call site by refusing to re-render — that dodge was
   taken twice before the third control could not use it.
+- **Quiet is not invisible, and `--line` is not an ink.** A mark meant to recede still has
+  to clear about 3:1 against its background; below that it is simply absent, and no test
+  notices because the element is present and the class applies. `--line` is a border
+  colour (1.4:1 on white) and vanishes when a glyph is drawn in it — use `--faint`. Assert
+  the computed colour, not the class, and check the contrast of anything deliberately
+  understated. The attendance grid's dots and unmarked squares sat below the threshold of
+  vision for two releases this way.
+- **One glyph must not carry two meanings.** `attendanceGrid` emits `unmarked` for a past
+  session she has not recorded and for one that has not happened yet; drawing both alike
+  made a forward month look like a wall of overdue work. Split the *drawing* in the view
+  (`data-future`) rather than inventing a state — the stored vocabulary stays the four
+  statuses plus null, and nothing new has to be persisted or counted.
 - **The template is not history.** Editing a slot never rewrites a past session.
 - **Never run anything on her machine.** All manual checks happen on Brenden's.
 - **She will never use git.** This repo is Brenden's history alone.

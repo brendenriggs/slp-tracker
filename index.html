@@ -9,6 +9,10 @@
     --bg: #ffffff; --fg: #1a1a1a; --muted: #666; --line: #d8d8d8;
     --accent: #2b6cb0; --warn: #b7791f; --danger: #c53030; --ok: #2f855a;
     --field: #ffffff; --row: #fafafa;
+    /* The quietest ink that is still ink: ~3.2:1 on white, just over WCAG's 3:1 floor
+       for a non-text graphic. --line is a border colour (1.4:1) and vanishes when a
+       glyph is drawn in it — which is what happened to the attendance grid's dots. */
+    --faint: #8f8f8f;
   }
   * { box-sizing: border-box; }
   body {
@@ -248,10 +252,23 @@
   .att-cell[data-state="missed"]    { color: var(--warn); font-weight: 700; }
   .att-cell[data-state="cancelled"] { color: var(--muted); }
   .att-cell sup { font-size: 9px; letter-spacing: .5px; }
-  .att-none { color: var(--line); }
+  /* A scheduled session she has not recorded is a to-do, and reads like one. A scheduled
+     session that has not happened yet is not — most of a forward-looking month is these,
+     and drawing them with the same weight turned the grid into a wall of false debts.
+     Same state either way (attendanceGrid emits 'unmarked' for both); only the drawing
+     differs, so nothing about what is stored or counted moves.
+
+     --muted rather than --fg: at full ink the to-do box outshouted ✗ and – on every row,
+     which inverts the hierarchy — an unrecorded session is a task, an absence is an
+     outcome. Compared side by side at 49 students before choosing. */
+  .att-cell[data-state="unmarked"] { color: var(--muted); }
+  .att-cell[data-state="unmarked"][data-future] { color: var(--faint); }
+  .att-none { color: var(--faint); }
   .att-owed-debt { color: var(--warn); }
   .att-legend { font-size: 12px; color: var(--muted); margin: 10px 0 0;
-                display: flex; flex-wrap: wrap; gap: 12px; }
+                display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline; }
+  .att-legend-glyph { font-size: 16px; color: var(--fg); }
+  .att-legend-glyph sup { font-size: 10px; letter-spacing: .5px; }
   /* In-flow, not absolute: it lives in its own row right after the one she clicked
      (gridTable), so it needs to take real space and push the rows below it down —
      an out-of-flow box would collapse its row to nothing and land who knows where. */
@@ -1179,7 +1196,10 @@ SLP.derive = (() => {
                owed: makeupBalance(flat) };
     });
 
-    return { dates, rows };
+    // `today` rides along so the view can tell an unrecorded session from one that has
+    // not happened. It is the same value the percentage already excluded the future by,
+    // rather than a second clock read at render time that could disagree with it.
+    return { dates, rows, today };
   }
 
   function studentState(entry, studentId) {
@@ -2638,10 +2658,15 @@ SLP.ui = (() => {
 
   // Glyph AND colour, never colour alone: her highlighter system does not survive a
   // colourblind reader or a grayscale print, and these go home in a folder.
-  const GLYPH = { present: '✓', absent: '✗', missed: '–',
-                  cancelled: '∅', unmarked: '▫' };
+  // `todo` and `unmarked` are the same stored state seen from either side of today:
+  // a session behind her that carries no record yet, and one that has not happened.
+  // U+25A1 □ against U+25AB ▫ — the second is named WHITE SMALL SQUARE and has almost
+  // no ink, which is right for "nothing to do yet" and wrong for anything else.
+  const GLYPH = { present: '✓', absent: '✗', missed: '–', cancelled: '∅',
+                  todo: '□', unmarked: '▫', none: '·' };
   const LABEL = { present: 'held', absent: 'absent', missed: 'I missed it',
-                  cancelled: 'cancelled', unmarked: 'scheduled, unmarked' };
+                  cancelled: 'cancelled', todo: 'not recorded yet',
+                  unmarked: 'scheduled, still to come', none: 'not scheduled' };
 
   const dayNum = ds => String(Number(ds.split('-')[2]));
 
@@ -2677,10 +2702,20 @@ SLP.ui = (() => {
   // unfinished, because that is what she reads at a glance onto a progress note.
   const pctProvisional = p => !!(p && p.pct !== null && p.uncharted);
 
-  function cellEl(date, row, cell) {
+  // Behind today, or with no clock supplied at all, a scheduled cell is a to-do. Only a
+  // date strictly after today is "still to come" — a session earlier today has been held
+  // and is genuinely waiting on her.
+  const isFuture = (date, today) => !!today && date > today;
+
+  function cellEl(date, row, cell, today) {
+    const future = isFuture(date, today);
+    // What it is drawn and announced as. `data-state` below stays the stored state —
+    // this is a reading of it, not a replacement, and nothing persists it.
+    const shown = cell.state === 'unmarked' && !future ? 'todo' : cell.state;
     return h('button', {
       class: 'att-cell', type: 'button',
       'data-state': cell.state,
+      ...(future ? { 'data-future': 'true' } : {}),
       'data-makeup': cell.isMakeup ? 'true' : 'false',
       'data-date': date,
       'data-student-id': row.student.id,
@@ -2689,7 +2724,7 @@ SLP.ui = (() => {
       // Same fallback GLYPH has, and for the same reason: a status from an older
       // vocabulary can still be sitting in a backup she restores. "Ada, 2026-10-05:
       // undefined" is what a screen reader read out without it.
-      'aria-label': row.student.name + ', ' + date + ': ' + (LABEL[cell.state] || cell.state) +
+      'aria-label': row.student.name + ', ' + date + ': ' + (LABEL[shown] || shown) +
                     (cell.isMakeup ? ' (makeup)' : ''),
       'on:click': () => {
         // The popover and the booking form are two ways of acting on the same row;
@@ -2701,30 +2736,42 @@ SLP.ui = (() => {
         };
         SLP.ui.render();
       },
-    }, ...makeupGlyph(cell));
+    }, ...makeupGlyph(cell, shown));
   }
 
   // Spec glyphs (spec:215): a *held* makeup is the single character `Ⓜ`, and every other
   // makeup state is its own glyph with a superscript M — so a booked-but-unmarked one
   // reads `▫ᴹ`. A uniform superscript would make a held makeup indistinguishable from a
   // held ordinary session at a glance, which is the distinction the column exists for.
-  function makeupGlyph(cell) {
-    const base = GLYPH[cell.state] || '?';
+  function makeupGlyph(cell, shown = cell.state) {
+    const base = GLYPH[shown] || '?';
     if (!cell.isMakeup) return [base];
     if (cell.state === 'present') return ['Ⓜ'];
     return [base, h('sup', { text: 'M' })];
   }
 
+  // Built from GLYPH and LABEL rather than spelled out again. It used to repeat every
+  // character as a literal beside the table that defines them, so changing a glyph left
+  // the legend describing a grid that no longer existed — and nothing failed.
+  //
+  // The makeup entries stay explicit because they are compositions, not table entries.
+  // The superscript is given as a rule rather than spelled out per combination: once
+  // `unmarked` split in two, "▫ᴹ makeup booked" was simply wrong for a past one, and
+  // listing □ᴹ beside ▫ᴹ trades a wrong legend for a cluttered one. `Ⓜ` still earns its
+  // own line because it replaces the glyph outright instead of decorating it.
+  const LEGEND_ORDER = ['present', 'absent', 'missed', 'cancelled', 'todo', 'unmarked', 'none'];
+
+  // The glyph is set larger than its label. At the legend's 12px, ▫ and · are the same
+  // small smudge — and this is the one place she comes to tell them apart, so the key
+  // being harder to read than the grid defeats the point of having one.
+  const legendEntry = (glyph, label) =>
+    h('span', {}, h('span', { class: 'att-legend-glyph', text: glyph }), ' ' + label);
+
   function legend() {
     return h('p', { class: 'att-legend', id: 'attendance-legend' },
-      h('span', { text: '✓ held' }),
-      h('span', { text: '✗ absent' }),
-      h('span', { text: '– I missed it' }),
-      h('span', { text: '∅ cancelled' }),
-      h('span', { text: '▫ scheduled, unmarked' }),
-      h('span', { text: '· not scheduled' }),
-      h('span', { text: 'Ⓜ makeup (held)' }),
-      h('span', { text: '▫ᴹ makeup booked, unmarked' }));
+      LEGEND_ORDER.map(k => legendEntry(GLYPH[k], LABEL[k])),
+      legendEntry('Ⓜ', 'makeup (held)'),
+      legendEntry('ᴹ', 'on any mark: a makeup'));
   }
 
   function gridTable(grid, slots) {
@@ -2764,8 +2811,8 @@ SLP.ui = (() => {
           // Two sessions in one day render as two boxes rather than one merged
           // verdict — uncommon, but merging would silently hide a miss.
           return h('td', { class: 'att-day', 'data-date': d },
-            cells.length ? cells.map(c => cellEl(d, row, c))
-                         : h('span', { class: 'att-none', text: '·' }));
+            cells.length ? cells.map(c => cellEl(d, row, c, grid.today))
+                         : h('span', { class: 'att-none', text: GLYPH.none }));
         }),
         h('td', { class: 'att-pct' + (pctProvisional(row.pct) ? ' att-pct-provisional' : ''),
                   text: pctText(row.pct) }),

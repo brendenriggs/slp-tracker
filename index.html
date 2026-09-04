@@ -13,6 +13,9 @@
        for a non-text graphic. --line is a border colour (1.4:1) and vanishes when a
        glyph is drawn in it — which is what happened to the attendance grid's dots. */
     --faint: #8f8f8f;
+    /* The crosshair tint. Light enough that a whole row and column of it does not
+       compete with the marks sitting on top of it. */
+    --hot: #eaf1fa;
   }
   * { box-sizing: border-box; }
   body {
@@ -65,6 +68,28 @@
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
   .panel { border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-bottom: 22px; }
+  /* #app's 1100px cap is a reading measure — right for prose, wrong for a grid, which
+     was rendering 900px of content into a 1400px window and cramping every cell to fit.
+     This one panel steps out of the cap and takes the window instead. The negative
+     margin re-centres it: 50% is half the container, 50vw half the window, so the
+     difference is exactly the gutter on one side. Clamped so it never exceeds the
+     window, and inert below 1100px where there is nothing to reclaim. */
+  @media (min-width: 1140px) {
+    .panel-wide { width: min(1360px, calc(100vw - 32px));
+                  margin-left: calc(50% - min(680px, 50vw - 16px)); }
+    /* The sticky header's background is only as wide as #app, so a panel wider than the
+       cap scrolls its rows out past both ends of that band and they show through behind
+       the title. This paints the band at the panel's width instead. Sized to match
+       .panel-wide exactly rather than 100vw, which would count the scrollbar and put a
+       horizontal scrollbar on the page. */
+    header.app-header { border-bottom-color: transparent; }
+    header.app-header::before {
+      content: ''; position: absolute; z-index: -1; top: 0; bottom: 0;
+      left: 50%; transform: translateX(-50%);
+      width: min(1360px, calc(100vw - 32px));
+      background: var(--bg); border-bottom: 1px solid var(--line);
+    }
+  }
   .panel h2 { font-size: 14px; margin: 0 0 10px; text-transform: uppercase;
               letter-spacing: .04em; color: var(--muted); }
   .row-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
@@ -217,9 +242,13 @@
   .att-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
   .att-grid { border-collapse: separate; border-spacing: 0; font-size: 13px; }
   .att-grid th, .att-grid td {
-    padding: 3px 5px; text-align: center; white-space: nowrap;
+    padding: 5px; text-align: center; white-space: nowrap;
     border-bottom: 1px solid var(--line); background: var(--bg);
   }
+  /* Her own log gives each mark a ~44x25 cell and fills it. This grid was handing each
+     one 16px of width — narrower than the glyph deserves and far narrower than the
+     window had spare. A day column is sized here rather than left to the content. */
+  .att-grid .att-day { min-width: 40px; padding: 2px; }
   .att-grid thead th { font-weight: 600; color: var(--muted); font-size: 11px; }
   .att-grid tbody tr:nth-child(even) th,
   .att-grid tbody tr:nth-child(even) td { background: var(--row); }
@@ -245,8 +274,12 @@
   .att-grid thead .att-month { border-bottom: 1px solid var(--line);
                                border-left: 1px solid var(--line);
                                font-size: 11px; letter-spacing: .3px; }
-  .att-cell { border: 0; background: none; padding: 0 3px; cursor: pointer;
-              font: inherit; line-height: 1.2; color: var(--muted); }
+  /* The mark fills its cell rather than sitting as a speck in the middle of one: the
+     whole box is the click target, which also makes it forgiving to hit at 49 rows. */
+  .att-cell { border: 0; background: none; padding: 0; cursor: pointer;
+              font-family: inherit; font-size: 20px; line-height: 1;
+              display: block; width: 100%; min-height: 26px;
+              color: var(--muted); }
   .att-cell[data-state="present"]   { color: var(--ok); }
   .att-cell[data-state="absent"]    { color: var(--danger); }
   .att-cell[data-state="missed"]    { color: var(--warn); font-weight: 700; }
@@ -264,6 +297,17 @@
   .att-cell[data-state="unmarked"] { color: var(--muted); }
   .att-cell[data-state="unmarked"][data-future] { color: var(--faint); }
   .att-none { color: var(--faint); }
+  /* The crosshair. A tint rather than a border, because a border on hover shifts every
+     cell by a pixel and the whole row appears to twitch. The sticky name/%/Owed cells
+     take it too — they are part of the row she is pointing at.
+
+     Written out through tbody/tr to outscore the zebra rule above. Source order does not
+     settle this: `.att-grid tbody tr:nth-child(even) td` is (0,2,2) and a plain
+     `.att-grid .att-hot` is only (0,2,0), so every striped row kept its grey and the
+     highlight appeared to work only on alternate rows. */
+  .att-grid tbody tr td.att-hot,
+  .att-grid tbody tr th.att-hot { background: var(--hot); }
+  .att-grid tbody tr th.att-hot.att-name { font-weight: 600; }
   .att-owed-debt { color: var(--warn); }
   .att-legend { font-size: 12px; color: var(--muted); margin: 10px 0 0;
                 display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline; }
@@ -2662,8 +2706,16 @@ SLP.ui = (() => {
   // a session behind her that carries no record yet, and one that has not happened.
   // U+25A1 □ against U+25AB ▫ — the second is named WHITE SMALL SQUARE and has almost
   // no ink, which is right for "nothing to do yet" and wrong for anything else.
-  const GLYPH = { present: '✓', absent: '✗', missed: '–', cancelled: '∅',
-                  todo: '□', unmarked: '▫', none: '·' };
+  // Checkbox-shaped, because that is what she already reads: her own attendance log is
+  // a grid of boxes she ticks, so an empty box and a ticked one are the pair her hand
+  // already knows. The exceptions stay non-box shapes — in her log the unusual days are
+  // a different shape, not a differently-filled box, and that is what makes them findable.
+  //
+  // U+FE0E is the text presentation selector. Without it ☑ and ☒ arrive as colour emoji
+  // on a good many systems, which would blow up the row and defeat the colour coding.
+  const TEXT = '︎';
+  const GLYPH = { present: '☑' + TEXT, absent: '✗', missed: '–', cancelled: '∅',
+                  todo: '☐' + TEXT, unmarked: '▫', none: '·' };
   const LABEL = { present: 'held', absent: 'absent', missed: 'I missed it',
                   cancelled: 'cancelled', todo: 'not recorded yet',
                   unmarked: 'scheduled, still to come', none: 'not scheduled' };
@@ -2841,9 +2893,48 @@ SLP.ui = (() => {
       return [tr];
     });
 
-    return h('div', { class: 'att-wrap' },
-      h('table', { class: 'att-grid', id: 'attendance-grid' },
-        h('thead', {}, monthRow, head), h('tbody', {}, body)));
+    const table = h('table', { class: 'att-grid', id: 'attendance-grid' },
+      h('thead', {}, monthRow, head), h('tbody', {}, body));
+    crosshair(table);
+    return h('div', { class: 'att-wrap' }, table);
+  }
+
+  // Which cell is she pointing at? Forty-nine rows against a month of columns is a long
+  // way for the eye to travel in both directions at once, and the row her finger is on
+  // is not the row her eye is on. The column is the half that needs help: a row already
+  // reads as a run, a column is only an alignment.
+  //
+  // Delegated to the table and driven by class toggling alone — no re-render. A render
+  // here would rebuild the grid under the pointer on every cell entry, and the popover
+  // and booking form both live in this table.
+  function crosshair(table) {
+    let lit = [];
+    const clear = () => { lit.forEach(el => el.classList.remove('att-hot')); lit = []; };
+    const light = target => {
+      clear();
+      if (!target) return;
+      const date = target.dataset.date;
+      const tr = target.closest('tr');
+      // The column by date, the row by its own cells. Both are cheap: one pass over a
+      // month of columns, one over a row.
+      if (date) lit = [...table.querySelectorAll('td.att-day[data-date="' + date + '"]')];
+      if (tr) lit = lit.concat([...tr.children]);
+      lit.forEach(el => el.classList.add('att-hot'));
+    };
+    table.addEventListener('mouseover', e => {
+      const td = e.target.closest && e.target.closest('td.att-day, th.att-name');
+      light(td && td.closest('tbody') ? td : null);
+    });
+    table.addEventListener('mouseleave', clear);
+    // Keyboard reaches the same cells — the marks are buttons, so she can tab across a
+    // row, and the highlight has to follow or it only exists for the mouse.
+    table.addEventListener('focusin', e => {
+      const td = e.target.closest && e.target.closest('td.att-day');
+      light(td && td.closest('tbody') ? td : null);
+    });
+    table.addEventListener('focusout', e => {
+      if (!table.contains(e.relatedTarget)) clear();
+    });
   }
 
   // A slot object is what setAttendance/setSessionAttendance want; the cell may know
@@ -3043,7 +3134,7 @@ SLP.ui = (() => {
     const grid = SLP.derive.attendanceGrid(data);
     grid.rows = grid.rows.filter(r => shown.has(r.student.id));
 
-    root.appendChild(h('section', { class: 'panel' },
+    root.appendChild(h('section', { class: 'panel panel-wide' },
       h('h2', { text: 'Attendance' }),
       h('div', { class: 'row-form' }, 'From', from, 'to', to),
       filters.el,

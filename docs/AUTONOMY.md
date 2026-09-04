@@ -104,6 +104,11 @@ here.
   the computed colour, not the class, and check the contrast of anything deliberately
   understated. The attendance grid's dots and unmarked squares sat below the threshold of
   vision for two releases this way.
+- **A state rule has to outscore the zebra rule, not just follow it.** The grid stripes
+  rows with `.att-grid tbody tr:nth-child(even) td` — specificity (0,2,2). Any hover,
+  selection or highlight written as `.att-grid .att-thing` is (0,2,0) and loses on every
+  other row no matter where it sits in the file; source order only breaks ties. Write it
+  through `tbody tr td.thing`, and assert the computed background on a *striped* row.
 - **One glyph must not carry two meanings.** `attendanceGrid` emits `unmarked` for a past
   session she has not recorded and for one that has not happened yet; drawing both alike
   made a forward month look like a wall of overdue work. Split the *drawing* in the view

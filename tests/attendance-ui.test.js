@@ -647,6 +647,10 @@ test('a fully charted student-page percentage is not styled provisional', async 
 // happily against a rule that styles nothing; tests/backup.test.js:152-168 is
 // the house convention for the same trap in its throwing form.
 
+// The box glyphs carry U+FE0E to force text presentation over colour emoji. It is
+// invisible and would have to be typed into every assertion below, so strip it once here.
+const attUiGlyph = el => el.textContent.replace(/︎/g, '');
+
 function attUiRgb(rgb) {
   return rgb.match(/\d+(\.\d+)?/g).slice(0, 3).map(Number);
 }
@@ -704,7 +708,7 @@ test('a past session she has not recorded draws a box with real weight', async (
 
   eq(cell.dataset.state, 'unmarked', 'the stored state is untouched by the split');
   eq(cell.dataset.future, undefined, 'this one is behind her, so it is a to-do');
-  eq(cell.textContent, '□', 'the larger square — U+25AB has almost no ink');
+  eq(attUiGlyph(cell), '☐', 'an empty box waiting to be ticked, the shape her own log uses');
   assert(attUiContrast(w, cell) >= 4.5,
      'she has to see the thing she still owes a record for — got ' +
      attUiContrast(w, cell).toFixed(2) + ':1');
@@ -718,7 +722,7 @@ test('a session still to come stays quiet', async () => {
 
   eq(cell.dataset.state, 'unmarked', 'same state as the past one — only the drawing differs');
   eq(cell.dataset.future, 'true', 'it has not happened yet');
-  eq(cell.textContent, '▫', 'the small square, deliberately');
+  eq(attUiGlyph(cell), '▫', 'the small square, deliberately');
   assert(attUiContrast(w, cell) < 4.5,
      'a session that has not happened is not a task she is behind on, and a month ' +
      'of them must not read as a wall of debts — got ' +
@@ -754,8 +758,46 @@ test('a makeup takes whichever square its own side of today calls for', async ()
   const future = attUiCells(doc, ada, FUTURE_WED)[0];
   eq(past.dataset.makeup, 'true', 'still a makeup');
   eq(future.dataset.makeup, 'true', 'still a makeup');
-  eq(past.textContent, '□M', 'behind her and unrecorded — the to-do square, plus the M');
-  eq(future.textContent, '▫M', 'not yet held — the quiet square, plus the M');
+  eq(attUiGlyph(past), '☐M', 'behind her and unrecorded — the to-do box, plus the M');
+  eq(attUiGlyph(future), '▫M', 'not yet held — the quiet square, plus the M');
+});
+
+test('pointing at a cell lights its whole row and column', async () => {
+  const w = await loadApp();
+  const { ada, bo } = await attUiSeed(w);
+  const doc = await attUiOpen(w, '2026-10-05', '2026-10-09');
+  const cell = attUiRow(doc, ada).querySelector('td.att-day[data-date="2026-10-05"]');
+
+  cell.dispatchEvent(new w.MouseEvent('mouseover', { bubbles: true }));
+
+  assert(cell.classList.contains('att-hot'), 'the cell she is on');
+  const rowLit = [...attUiRow(doc, ada).children].every(el => el.classList.contains('att-hot'));
+  assert(rowLit, 'the whole row, name and the two answers included');
+  const colMate = attUiRow(doc, bo).querySelector('td.att-day[data-date="2026-10-05"]');
+  assert(colMate.classList.contains('att-hot'), 'and the same day down every other row');
+});
+
+test('the crosshair is visible on a striped row, not only the white ones', async () => {
+  // The zebra rule is `.att-grid tbody tr:nth-child(even) td` — (0,2,2). A plain
+  // `.att-grid .att-hot` is (0,2,0) and loses to it no matter where it is declared, so
+  // the highlight silently did nothing on every other row. Asserting the class alone
+  // would have passed against exactly that bug; this reads the computed colour.
+  const w = await loadApp();
+  await attUiSeed(w);
+  const doc = await attUiOpen(w, '2026-10-05', '2026-10-09');
+  const rows = [...doc.querySelectorAll('#attendance-grid tbody tr')];
+  const plain = rows[0].querySelector('td.att-day');
+  const striped = rows[1].querySelector('td.att-day');
+  const bg = el => w.getComputedStyle(el).backgroundColor;
+
+  assert(bg(plain) !== bg(striped),
+     'guard: these rows must actually be striped differently, or this proves nothing');
+  const before = bg(striped);
+
+  striped.dispatchEvent(new w.MouseEvent('mouseover', { bubbles: true }));
+
+  assert(bg(striped) !== before,
+     'the striped row must change colour under the pointer — still ' + bg(striped));
 });
 
 test('the legend is built from the glyph table, so it cannot drift from the grid', async () => {
@@ -768,7 +810,7 @@ test('the legend is built from the glyph table, so it cannot drift from the grid
   const legend = doc.querySelector('#attendance-legend');
 
   for (const cell of doc.querySelectorAll('.att-cell, .att-none')) {
-    const glyph = cell.textContent.replace(/M$/, '');
+    const glyph = attUiGlyph(cell).replace(/M$/, '');
     assert(legend.textContent.includes(glyph),
        'the grid drew ' + glyph + ' and the legend never mentions it');
   }

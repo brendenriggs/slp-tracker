@@ -800,6 +800,148 @@ test('the crosshair is visible on a striped row, not only the white ones', async
      'the striped row must change colour under the pointer — still ' + bg(striped));
 });
 
+// --- the slide arrows ----------------------------------------------------
+// Above the day numbers, flanking the month band. The arithmetic they call is
+// covered in attendance-derive.test.js; these are about the control.
+
+const ATT_UI_ARROWS = ['att-month-back', 'att-week-back', 'att-week-fwd', 'att-month-fwd'];
+
+async function attUiArrow(w, id) {
+  const btn = w.document.getElementById(id);
+  assert(btn, 'no arrow at #' + id);
+  // A real click focuses the button first; .click() alone does not, and the whole
+  // point of the id is what happens to focus across the render that follows.
+  btn.focus();
+  btn.click();
+  await w.SLP.ui.render();
+  return w.document;
+}
+
+const attUiRange = doc => ({ from: doc.querySelector('#attendance-from').value,
+                             to: doc.querySelector('#attendance-to').value });
+
+test('the month band carries an arrow at each end', async () => {
+  const w = await loadApp();
+  await attUiSeed(w);
+  const doc = await attUiOpen(w);
+  const band = doc.querySelector('#attendance-months');
+  assert(band, 'the band exists to hang them on');
+  for (const id of ATT_UI_ARROWS) {
+    const btn = doc.getElementById(id);
+    assert(btn, 'no arrow at #' + id);
+    assert(band.contains(btn), '#' + id + ' belongs in the band, above the dates');
+    assert(btn.getAttribute('aria-label'),
+       '#' + id + ' draws a glyph, so the name it announces has to be written out');
+  }
+});
+
+test('a week arrow slides the window and the date inputs follow', async () => {
+  const w = await loadApp();
+  await attUiSeed(w);
+  await attUiOpen(w, '2026-10-05', '2026-10-09');
+  eq(attUiRange(await attUiArrow(w, 'att-week-fwd')),
+     { from: '2026-10-12', to: '2026-10-16' },
+     'the range is one thing: the arrow moves it and the pickers show where it went');
+  eq(attUiRange(await attUiArrow(w, 'att-week-back')),
+     { from: '2026-10-05', to: '2026-10-09' }, 'and back is back');
+});
+
+test('a month arrow steps to the whole next month, band label and all', async () => {
+  const w = await loadApp();
+  await attUiSeed(w);
+  await attUiOpen(w, '2026-10-01', '2026-10-31');
+  const doc = await attUiArrow(w, 'att-month-fwd');
+  eq(attUiRange(doc), { from: '2026-11-01', to: '2026-11-30' }, 'all of November');
+  const labels = Array.from(doc.querySelectorAll('#attendance-months .att-month'))
+    .map(th => th.textContent);
+  eq(labels, ['Nov 2026'],
+     'the band names where she is now — one month, so one label');
+});
+
+test('the arrows keep the keyboard, so she can step back four weeks in a row', async () => {
+  // Every render tears #app down; doRender finds the focused control again by id
+  // alone. Leave the id off and her hand loses the button on the first press.
+  const w = await loadApp();
+  await attUiSeed(w);
+  await attUiOpen(w, '2026-10-01', '2026-10-31');
+  const doc = await attUiArrow(w, 'att-week-back');
+  eq(doc.activeElement.id, 'att-week-back',
+     'focus survived the render — got ' + (doc.activeElement.id || doc.activeElement.tagName));
+});
+
+test('a range that does not mean anything yet has no arrows to slide it', async () => {
+  // She sets the two ends one at a time, so an inverted range is a normal state on the
+  // way through. The grid is already replaced by the error message there, and the
+  // arrows live inside it — so they go too, rather than sitting live above nothing.
+  const w = await loadApp();
+  await attUiSeed(w);
+  await attUiOpen(w, '2026-10-01', '2026-10-31');
+  await attUiSetRange(w, 'to', '2026-09-01');
+  const doc = w.document;
+  assert(doc.querySelector('#attendance-range-error'), 'guard: it really is the bad state');
+  for (const id of ATT_UI_ARROWS) {
+    assert(!doc.getElementById(id),
+       '#' + id + ' must not be pressable over a range with no days in it');
+  }
+});
+
+test('and the arrows come back the moment the range makes sense again', async () => {
+  const w = await loadApp();
+  await attUiSeed(w);
+  await attUiOpen(w, '2026-10-01', '2026-10-31');
+  await attUiSetRange(w, 'to', '2026-09-01');
+  await attUiSetRange(w, 'to', '2026-10-31');
+  for (const id of ATT_UI_ARROWS) {
+    assert(w.document.getElementById(id), '#' + id + ' is back');
+  }
+});
+
+test('the arrows are actually visible against the band', async () => {
+  const w = await loadApp();
+  await attUiSeed(w);
+  const doc = await attUiOpen(w);
+  for (const id of ATT_UI_ARROWS) {
+    const ratio = attUiContrast(w, doc.getElementById(id));
+    assert(ratio >= 4.5,
+       '#' + id + ' is a control she has to find and hit, not a mark meant to ' +
+       'recede. Got ' + ratio.toFixed(2) + ':1');
+  }
+});
+
+test('the arrows are a real target, not a glyph-sized speck', async () => {
+  // A contrast floor alone does not catch a dropped rule: with the whole .att-slide
+  // block invalidated the buttons fell back to black on white and sailed through at
+  // 21:1, 12px wide. Size is the half that noticed, so it is asserted here — and this
+  // app spent a release enlarging the marks these sit above.
+  const w = await loadApp();
+  await attUiSeed(w);
+  const doc = await attUiOpen(w);
+  for (const id of ATT_UI_ARROWS) {
+    const box = doc.getElementById(id).getBoundingClientRect();
+    assert(box.width >= 24 && box.height >= 22,
+       '#' + id + ' is pressed repeatedly to walk through a term. Got ' +
+       Math.round(box.width) + 'x' + Math.round(box.height));
+  }
+});
+
+test('each pair of arrows reads as one control, not two strays', async () => {
+  // Split across the % and Owed cells the forward pair landed 93px apart at her 1280
+  // and read as litter along the header. Measured with getBoundingClientRect, the
+  // house style for a layout claim — a class assertion cannot see this at all.
+  const w = await loadApp();
+  await attUiSeed(w);
+  const doc = await attUiOpen(w);
+  const gap = (a, b) => {
+    const x = doc.getElementById(a).getBoundingClientRect();
+    const y = doc.getElementById(b).getBoundingClientRect();
+    return Math.abs(y.left - x.right);
+  };
+  assert(gap('att-month-back', 'att-week-back') <= 8,
+     'the back pair sits together — got ' + Math.round(gap('att-month-back', 'att-week-back')) + 'px apart');
+  assert(gap('att-week-fwd', 'att-month-fwd') <= 8,
+     'and so does the forward pair — got ' + Math.round(gap('att-week-fwd', 'att-month-fwd')) + 'px apart');
+});
+
 test('the legend is built from the glyph table, so it cannot drift from the grid', async () => {
   // It used to hardcode all nine glyphs as string literals beside the table that
   // defines them. Changing one silently left the legend describing a grid that no

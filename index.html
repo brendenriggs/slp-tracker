@@ -274,6 +274,19 @@
   .att-grid thead .att-month { border-bottom: 1px solid var(--line);
                                border-left: 1px solid var(--line);
                                font-size: 11px; letter-spacing: .3px; }
+  /* The arrows that slide the window, flanking the band. --fg rather than the --muted
+     the rest of the header row wears: everything else up here is a label she reads, and
+     this is the one thing she has to find and hit. A control that recedes into a
+     deliberately quiet row is a control she does not know is there.
+
+     Sized rather than left to the glyph, for the same reason the day columns are: the
+     glyphs alone gave a 12x15 target, smaller than the marks whose cells this app just
+     spent a release enlarging, and these are pressed repeatedly to walk through a term. */
+  .att-slide { border: 0; background: none; cursor: pointer; padding: 0;
+               font-family: inherit; font-size: 16px; line-height: 1;
+               min-width: 26px; height: 24px; border-radius: 3px;
+               color: var(--fg); }
+  .att-slide:hover { color: var(--accent); background: var(--row); }
   /* The mark fills its cell rather than sitting as a speck in the middle of one: the
      whole box is the click target, which also makes it forgiving to hit at 49 rows. */
   .att-cell { border: 0; background: none; padding: 0; cursor: pointer;
@@ -1151,6 +1164,61 @@ SLP.derive = (() => {
     return { from: y + '-' + pad2(mo) + '-01', to: y + '-' + pad2(mo) + '-' + pad2(last) };
   }
 
+  // --- sliding the range -------------------------------------------------
+  // What the arrows above the grid do. Kept here, pure, because the whole rule is
+  // arithmetic — the buttons only call these and re-render.
+
+  const isDateStr = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s));
+  // `new Date(y, mo, 0)` is the last day of month `mo`, the zeroth of the next.
+  const lastDayOf = (y, mo) => new Date(y, mo, 0).getDate();
+  const stamp = dt => dt.getFullYear() + '-' + pad2(dt.getMonth() + 1) + '-' + pad2(dt.getDate());
+
+  // Local-date arithmetic, like dowOf and eachDate: a UTC parse shifts a day either
+  // side of a timezone and the whole range walks.
+  function addDays(dateStr, n) {
+    const [y, mo, d] = dateStr.split('-').map(Number);
+    return stamp(new Date(y, mo - 1, d + n));
+  }
+
+  // The day clamps: there is no February 31st, so Mar 31 back one month is Feb 28.
+  function addMonths(dateStr, n) {
+    const [y, mo, d] = dateStr.split('-').map(Number);
+    const t = new Date(y, mo - 1 + n, 1);
+    const ty = t.getFullYear(), tm = t.getMonth() + 1;
+    return ty + '-' + pad2(tm) + '-' + pad2(Math.min(d, lastDayOf(ty, tm)));
+  }
+
+  // A range she built out of whole months — the default month, or the quarter she
+  // sets at progress-note time. Worth knowing, because such a range must move as
+  // whole months rather than by day arithmetic.
+  function isWholeMonths(from, to) {
+    const [ty, tm, td] = to.split('-').map(Number);
+    return from.slice(8) === '01' && td === lastDayOf(ty, tm);
+  }
+
+  // Both ends move together, so the width she chose is preserved exactly. A
+  // half-typed range is handed back untouched rather than turned into a date she
+  // never picked — she sets the two ends one at a time, so a blank end is a normal
+  // state on the way through.
+  function shiftRangeWeeks(range, n) {
+    const { from, to } = range || {};
+    if (!isDateStr(from) || !isDateStr(to)) return { from, to };
+    return { from: addDays(from, n * 7), to: addDays(to, n * 7) };
+  }
+
+  // Whole months snap to whole months: February forward is all 31 days of March, not
+  // Mar 1–28. Clamping the end instead would shave a day off her window on every
+  // press and never give it back. Anything else is plain month arithmetic.
+  function shiftRangeMonths(range, n) {
+    const { from, to } = range || {};
+    if (!isDateStr(from) || !isDateStr(to)) return { from, to };
+    if (!isWholeMonths(from, to)) return { from: addMonths(from, n), to: addMonths(to, n) };
+    const end = addMonths(to.slice(0, 8) + '01', n);
+    const [ey, em] = end.split('-').map(Number);
+    return { from: addMonths(from, n),
+             to: ey + '-' + pad2(em) + '-' + pad2(lastDayOf(ey, em)) };
+  }
+
   // A student owed 90 minutes gets a 30-minute makeup proposed, not a 90-minute one:
   // she settles a debt over several sessions, not in one marathon a child could not
   // sit through. The cap is that student's own longest regular session — someone
@@ -1344,7 +1412,7 @@ SLP.derive = (() => {
 
   return { studentState, chartedCount, objectivesCharted, series, mastery, pair, minutesOf,
            makeupBalance, attendancePct, attendanceGrid, schools, canonicalSchool, monthRange,
-           makeupDuration };
+           makeupDuration, shiftRangeWeeks, shiftRangeMonths };
 })();
 
 // ============================================================
@@ -2826,16 +2894,52 @@ SLP.ui = (() => {
       legendEntry('ᴹ', 'on any mark: a makeup'));
   }
 
+  // One arrow. Sliding is the same act however far it goes, so the four differ only in
+  // the shift they hand the range — the arithmetic itself is in derive, where it can be
+  // tested without a DOM.
+  //
+  // The `id` is load-bearing, not decoration. Pressing an arrow re-renders, every render
+  // tears #app down, and doRender finds the focused control again by id alone: leave it
+  // off and her hand loses the button on the first press, which is exactly the case
+  // ("back four weeks in a row") the control exists for.
+  function slideBtn(id, glyph, label, shift) {
+    return h('button', {
+      class: 'att-slide', id, type: 'button', text: glyph, 'aria-label': label,
+      'on:click': async () => {
+        ui.range = shift(ui.range);
+        // The window just moved out from under any open popover or booking form, and
+        // the row they were pinned to may not be on screen any more. Same reason the
+        // school filter clears them.
+        ui.marking = null;
+        ui.booking = null;
+        await SLP.ui.render();
+      },
+    });
+  }
+
   function gridTable(grid, slots) {
+    const D = SLP.derive;
     // Two header rows. The day row carries day-of-month alone, which repeats across a
     // quarter ("1" three times); the band above it names the month each run belongs to.
+    //
+    // The arrows flank the band rather than repeating inside each month span: with a
+    // quarter on screen there are three labels up here and still only one window to
+    // move. The two corner cells they sit in were empty and are already sticky, so they
+    // stay under her hand while she scrolls a quarter sideways.
     const monthRow = h('tr', { id: 'attendance-months' },
-      h('th', { class: 'att-name', scope: 'col' }),
+      h('th', { class: 'att-name', scope: 'col' },
+        slideBtn('att-month-back', '«', 'Back one month', r => D.shiftRangeMonths(r, -1)),
+        slideBtn('att-week-back', '‹', 'Back one week', r => D.shiftRangeWeeks(r, -1))),
       monthBand(grid.dates).map(s => h('th', {
         class: 'att-month', scope: 'colgroup', colspan: String(s.count),
         'data-month': s.key, text: s.label })),
       h('th', { class: 'att-pct', scope: 'col' }),
-      h('th', { class: 'att-owed', scope: 'col' }));
+      // Both forward arrows in the one cell. Split across % and Owed they landed 93px
+      // apart at her 1280 — the pair on the left read as a control and the pair on the
+      // right read as two strays. Measured, not guessed; tmp/cdp-shot-arrows.js.
+      h('th', { class: 'att-owed', scope: 'col' },
+        slideBtn('att-week-fwd', '›', 'Forward one week', r => D.shiftRangeWeeks(r, 1)),
+        slideBtn('att-month-fwd', '»', 'Forward one month', r => D.shiftRangeMonths(r, 1))));
 
     const head = h('tr', {},
       h('th', { class: 'att-name', scope: 'col', text: 'Student' }),

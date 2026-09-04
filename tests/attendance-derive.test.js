@@ -439,3 +439,74 @@ test('a student with no regular slot is proposed the whole debt', async () => {
   const w = await loadApp();
   eq(w.SLP.derive.makeupDuration(45, [], 's1'), 45, 'nothing to cap against');
 });
+
+// --- sliding the range ---------------------------------------------------
+// The two arrows above the grid. Pure, and tested here rather than through the
+// DOM, because the whole rule is arithmetic: what the buttons do is call these.
+
+test('a week back moves both ends seven days, across the month boundary', async () => {
+  const w = await loadApp();
+  eq(w.SLP.derive.shiftRangeWeeks({ from: '2026-10-05', to: '2026-10-11' }, -1),
+     { from: '2026-09-28', to: '2026-10-04' },
+     'a week is seven days, not "the previous calendar week"');
+});
+
+test('a week forward crosses a year boundary', async () => {
+  const w = await loadApp();
+  eq(w.SLP.derive.shiftRangeWeeks({ from: '2026-12-28', to: '2027-01-03' }, 1),
+     { from: '2027-01-04', to: '2027-01-10' },
+     'December does not trap the range');
+});
+
+test('sliding a week keeps whatever width she set', async () => {
+  const w = await loadApp();
+  // Her quarter, nudged. The window is the thing being moved; its size is hers.
+  eq(w.SLP.derive.shiftRangeWeeks({ from: '2026-09-01', to: '2026-11-30' }, 1),
+     { from: '2026-09-08', to: '2026-12-07' },
+     'both ends move, so a 91-day window stays a 91-day window');
+});
+
+test('a whole month lands on the whole next month, not on the same day number', async () => {
+  const w = await loadApp();
+  // The clamp would give Feb 28 here. A month arrow that turns February into a
+  // 28-day window and then never gets it back is the bug this rule exists for.
+  eq(w.SLP.derive.shiftRangeMonths({ from: '2028-02-01', to: '2028-02-29' }, 1),
+     { from: '2028-03-01', to: '2028-03-31' },
+     'a whole month forward is the whole month, all 31 days of it');
+  eq(w.SLP.derive.shiftRangeMonths({ from: '2028-03-01', to: '2028-03-31' }, -1),
+     { from: '2028-02-01', to: '2028-02-29' },
+     'and back again, leap day included');
+});
+
+test('a whole month back crosses a year boundary', async () => {
+  const w = await loadApp();
+  eq(w.SLP.derive.shiftRangeMonths({ from: '2027-01-01', to: '2027-01-31' }, -1),
+     { from: '2026-12-01', to: '2026-12-31' },
+     'January steps back into last December');
+});
+
+test('a run of whole months moves as whole months', async () => {
+  const w = await loadApp();
+  // Her progress-note quarter. Plain arithmetic would give Dec 30 and quietly
+  // shave a day off the window every time she pressed the arrow.
+  eq(w.SLP.derive.shiftRangeMonths({ from: '2026-09-01', to: '2026-11-30' }, 1),
+     { from: '2026-10-01', to: '2026-12-31' },
+     'Sep–Nov is three whole months, so it becomes Oct–Dec');
+});
+
+test('a range that is not whole months moves both ends and clamps the day', async () => {
+  const w = await loadApp();
+  eq(w.SLP.derive.shiftRangeMonths({ from: '2027-03-15', to: '2027-03-31' }, -1),
+     { from: '2027-02-15', to: '2027-02-28' },
+     'there is no February 31st; the end clamps rather than spilling into March');
+});
+
+test('a half-typed range is handed back untouched rather than invented', async () => {
+  const w = await loadApp();
+  // She sets the two ends one at a time, so a blank end is a normal state on the
+  // way through. Neither arrow may turn it into a date she did not choose.
+  eq(w.SLP.derive.shiftRangeWeeks({ from: '', to: '2026-10-31' }, -1),
+     { from: '', to: '2026-10-31' }, 'no start to move');
+  eq(w.SLP.derive.shiftRangeMonths({ from: '2026-10-01', to: '' }, 1),
+     { from: '2026-10-01', to: '' }, 'no end to move');
+});

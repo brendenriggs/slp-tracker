@@ -347,7 +347,7 @@
 // SLP Session Tracker — one file, no build step, no network.
 // Sections below are ordered by dependency; each only uses those above it.
 // ============================================================
-window.SLP = { version: '1.7.0' };
+window.SLP = { version: '1.8.0' };
 
 // ============================================================
 // SECTION: db — IndexedDB access. Knows stores, not meaning.
@@ -1077,12 +1077,19 @@ SLP.derive = (() => {
     return Math.max(0, b - a);
   }
 
-  // Her number, not the child's. Two rules, and one of them is load-bearing:
+  // Her number, not the child's. Three rules, and two of them are load-bearing:
   //
   // The `!r.isMakeup` on the debt line stops a missed makeup adding a SECOND helping
   // of debt for the one obligation it was booked to settle — she would owe 60 minutes
   // for a single skipped session, and the figure would drift upward every time a
   // makeup slipped. A missed makeup is correctly a no-op: the original debt stands.
+  //
+  // What repays a debt is the ATTEMPT, not the attendance (Carol Ann, 2026-09-06):
+  // "debt only gets cleared if the child misses the makeup or if Carol Ann holds the
+  // session." So `absent` credits alongside `present` — she offered the time back, and
+  // a child declining it is not a further obligation on her. The two statuses this
+  // deliberately leaves out are the two where no attempt was made: `missed`, which is
+  // her own slip and is caught by the rule above, and `cancelled`, which nobody chose.
   //
   // `owed` clamps at zero because over-delivering is not a bank balance. Giving a
   // child an extra 30 minutes does not entitle her to skip 30 later.
@@ -1090,7 +1097,9 @@ SLP.derive = (() => {
     let debt = 0, credit = 0;
     for (const r of rows || []) {
       if (r.status === 'missed' && !r.isMakeup) debt += r.minutes || 0;
-      if (r.status === 'present' && r.isMakeup) credit += r.minutes || 0;
+      if (r.isMakeup && (r.status === 'present' || r.status === 'absent')) {
+        credit += r.minutes || 0;
+      }
     }
     return { debt, credit, owed: Math.max(0, debt - credit) };
   }
@@ -1124,8 +1133,17 @@ SLP.derive = (() => {
       if (r.status === 'present') { heldMinutes += r.minutes || 0; heldSessions++; }
     }
     // Nothing offered is not zero percent — that reads as a child who never came.
-    const pct = offeredMinutes > 0
-      ? Math.round((heldMinutes / offeredMinutes) * 100) : null;
+    //
+    // Sessions, not minutes (Carol Ann, 2026-09-06): she does no partial sessions, so a
+    // 60-minute session is not worth two 30-minute ones. This also stops the two halves
+    // of pctText contradicting each other — it renders `50% · 1 of 2` from one row, and
+    // while the figure came off minutes and the count off sessions, a student carrying
+    // two session lengths could be printed as `33% · 1 of 2` on a progress note.
+    //
+    // The minute totals stay in the return: they are what the IEP is written in, and
+    // dropping them here would only push the arithmetic somewhere less visible.
+    const pct = offeredSessions > 0
+      ? Math.round((heldSessions / offeredSessions) * 100) : null;
     return { pct, heldMinutes, offeredMinutes, heldSessions, offeredSessions, uncharted };
   }
 

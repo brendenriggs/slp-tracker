@@ -54,11 +54,21 @@ a percentage on a progress note already sent home, which the forward-only one ca
 
 ## Consequences
 
-`makeupBalance` stops returning minutes and starts returning attempts, and its credit line
-changes shape: today it credits only `present && isMakeup`, and it must also credit
-`absent && isMakeup`, because the child skipping an attempt repays it. The existing
-`!r.isMakeup` guard on the debt line survives untouched — a makeup the *clinician* missed
-still earns no credit, which is the same rule it has always encoded.
+`makeupBalance` stops returning minutes and starts returning attempts. **The credit half of
+that shipped in 1.8.0**: it now credits `absent && isMakeup` alongside `present && isMakeup`,
+because the child skipping an attempt repays it. The `!r.isMakeup` guard on the debt line
+survived untouched — a makeup the *clinician* missed still earns no credit, which is the
+same rule it has always encoded.
+
+What has *not* shipped is the unit. `owed` is still minutes, because `makeupDuration`
+(`index.html:1226`) sizes a proposed makeup from that figure and the booking dialog and
+student page both print `owes N min`. Changing the unit is a change to makeup booking, not a
+change to a label, and it belongs with the requirement model.
+
+Nor has the one-attempt-versus-two rule: it needs the **Frequency** field, which does not
+exist yet. Every student in the model today is effectively weekly, so crediting on a single
+attempt is the correct rule for all of them, and stays correct for weekly students
+afterwards.
 
 `Owed` is displayed in sessions. Minutes become an input the app reads off the IEP, never a
 figure it reports — the clinician does no partial sessions, so session count is the only

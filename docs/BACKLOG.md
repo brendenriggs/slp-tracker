@@ -20,10 +20,11 @@ low-cadence students stay on the weekly schedule with their unneeded weekdays dr
 **Opportunities**, the child's percentage is measured against what they needed, and makeup
 debt is counted in **Attempts** rather than minutes.
 
-Lands in `SLP.derive.attendancePct` and `SLP.derive.makeupBalance` (both currently in
-minutes), the cell states in `attendanceGrid`, and the `Owed` display. The pinned
-minutes-not-sessions test in `tests/attendance-derive.test.js` asserts the *old* answer
-deliberately and has to be rewritten as part of this, not worked around.
+**Two pieces shipped ahead of the rest in 1.8.0**, because they were one line each and
+needed nothing from the model: `attendancePct` now computes in sessions, and
+`makeupBalance` credits an attempt the child skipped. What remains is the requirement
+itself, the **Frequency** field, opportunity cells, the three percentages, and moving
+`owed` off minutes.
 
 ---
 

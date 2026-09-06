@@ -577,9 +577,12 @@ test('a cleared date on the student page says so too', async () => {
      'nothing is claimed over a range she has not finished picking');
 });
 
+// The pin exists so a bump is always a deliberate act rather than a reflex, and it has
+// now forced the decision twice. 1.8.0 covers what 1.7.0 never got a number for: the
+// slide arrows, and the attendance figure moving from minutes to session count.
 test('the version records that Attendance shipped', async () => {
   const w = await loadApp();
-  eq(w.SLP.version, '1.7.0', 'a new tab is a minor bump');
+  eq(w.SLP.version, '1.8.0', 'a new tab or a change to her headline number is a minor bump');
 });
 
 // A classList check alone cannot fail on the real defect here — .att-pct-provisional was

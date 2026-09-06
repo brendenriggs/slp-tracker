@@ -155,7 +155,9 @@ in. Requires a data migration, because her records do not cross origins.
 - **"Percentage of time" was resolved on 2026-09-06: sessions, never minutes.** The
   clinician does no partial sessions, so a 60-minute session and a 30-minute one count the
   same. Minutes remain an *input* read off the IEP and are never a figure the app reports.
-  **The code has not caught up** — `attendancePct` and `makeupBalance` still compute in
-  minutes. See `docs/adr/0004-service-requirements-and-attempt-based-debt.md`.
+  `attendancePct` computes in sessions as of 1.8.0. **`makeupBalance` has not caught up** —
+  it credits attempts correctly but still reports `owed` in minutes, because
+  `makeupDuration` sizes a proposed makeup from that figure. See
+  `docs/adr/0004-service-requirements-and-attempt-based-debt.md`.
 - **Slot vs Session** was used interchangeably in early prose. They are distinct: the slot
   is the template, the session is history. Editing one never rewrites the other.

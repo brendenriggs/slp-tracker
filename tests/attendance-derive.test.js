@@ -95,6 +95,19 @@ test('missing a makeup adds no second helping of debt', async () => {
   eq(b, { debt: 30, credit: 0, owed: 30 }, 'the original debt simply stays outstanding');
 });
 
+// Carol Ann's rule, 2026-09-06: what repays a debt is the *attempt*, not the attendance.
+// "debt only gets cleared if the child misses the makeup or if Carol Ann holds the
+// session." A child who does not turn up to the makeup she offered has had their makeup.
+test('a makeup the child skips still repays the debt', async () => {
+  const w = await loadApp();
+  const b = w.SLP.derive.makeupBalance([
+    attMiss(30),
+    { status: 'absent', isMakeup: true, minutes: 30 },
+  ]);
+  eq(b, { debt: 30, credit: 30, owed: 0 },
+     'she offered the time back; the child not taking it is not a further debt');
+});
+
 test('nothing but her own misses creates debt', async () => {
   const w = await loadApp();
   const b = w.SLP.derive.makeupBalance([
@@ -169,15 +182,31 @@ test('uncharted sessions are excluded from the number and counted beside it', as
   eq(p.uncharted, 2, 'but a confident 100% out of one session must say so out loud');
 });
 
-test('minutes, not session count, decide the percentage', async () => {
+// This test asserted 33 until 2026-09-06, pinning an assumption the spec had made and
+// nobody had checked. Carol Ann settled it: she does no partial sessions, so a session
+// is a session whatever its length. The pin did its job — the answer landed here and
+// nowhere else. See docs/adr/0004-service-requirements-and-attempt-based-debt.md.
+test('session count, not minutes, decides the percentage', async () => {
   const w = await loadApp();
   // One 30-minute session held, one 60-minute session missed by the child.
-  // By session count this is 50%. By minutes it is 33%.
+  // By session count this is 50%. By minutes it would be 33%.
   const p = attPct(w, [attRow('2026-10-05', 'present', 30),
                        attRow('2026-10-12', 'absent', 60)]);
-  eq(p.pct, 33, 'the honest figure when a student carries two session lengths');
+  eq(p.pct, 50, 'she does no partial sessions, so length cannot weight the figure');
   eq([p.heldSessions, p.offeredSessions], [1, 2],
-     'the counts still travel, because "1 of 2" is what she writes in the note');
+     'and the number now agrees with the "1 of 2" printed beside it');
+});
+
+// The headline and the count beside it are rendered from one string — pctText builds
+// `50% · 1 of 2`. While the percentage came off minutes and the count off sessions, the
+// two halves of that string could contradict each other on a progress note.
+test('the percentage and the count beside it cannot disagree', async () => {
+  const w = await loadApp();
+  const p = attPct(w, [attRow('2026-10-05', 'present', 30),
+                       attRow('2026-10-12', 'present', 15),
+                       attRow('2026-10-19', 'absent', 90)]);
+  eq(p.pct, 67, 'two of three, whatever the three were worth in minutes');
+  eq([p.heldSessions, p.offeredSessions], [2, 3], 'which is what the note will say');
 });
 
 test('a student with nothing offered reads as a dash, not zero', async () => {

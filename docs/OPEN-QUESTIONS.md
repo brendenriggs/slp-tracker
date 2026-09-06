@@ -7,117 +7,61 @@ made is recorded so it can be corrected cheaply.
 Phrased for asking her directly. When one is answered, fold it into the spec and delete it
 here.
 
----
-
-## 1. When you report an attendance percentage, is it out of *time* or out of *sessions*?
-
-> If a child was scheduled for four sessions — three half-hour ones and one that ran a full
-> hour — and came to everything except that long one, is that 75% (three of four sessions)
-> or 60% (90 minutes of 150)?
-
-**Why it matters:** it is the definition of the headline number on her progress notes.
-
-**Assumed meanwhile:** minutes, per the spec's reasoning.
-
-Earlier notes said this was untestable, on the reasoning that every fixture uses 30-minute
-slots so both definitions produce identical numbers. That is no longer true, and was never
-true of the test that matters: `tests/attendance-derive.test.js`, *minutes, not session
-count, decide the percentage*, seeds one 30-minute session held and one 60-minute session
-missed — 50% by session count, 33% by minutes — and asserts 33.
-
-So the assumption is pinned rather than floating. **If she says sessions, that one test is
-where the answer lands**, along with the `heldMinutes`/`offeredMinutes` arithmetic in
-`SLP.derive.attendancePct`. The question is still hers to answer; what changed is that
-answering it is now a small, located edit instead of an audit.
+**Six questions were answered on 2026-09-06** and are folded into
+`docs/adr/0004-service-requirements-and-attempt-based-debt.md`, `CONTEXT.md` and
+`docs/BACKLOG.md`. The two below are what is left, plus one raised and unanswered in the
+same conversation.
 
 ---
 
-## 2. When you fix a slot's time, do you mean "it has always been this" or "from now on"?
+## 1. When a school closure wipes out a month's opportunities, is the child short?
 
-> Say your Tuesday group is down as 9:00 but it has really been 9:30, and you have already
-> written up last week. Should fixing it correct last week's write-up too, or should last
-> week stay as it is and only future weeks move?
+> A child needs two sessions in October and both their Tuesdays were snow days. Does that
+> month read **0 of 2**, or does it read **nothing was required**?
 
-**Why it matters:** these need different designs. The app deliberately treats the weekly
-schedule as a plan and a written-up session as history, so editing the plan does not reach
-back. If she wants the correction to be retroactive, that rule has to change. If she wants
-it forward-only, she instead needs a way to fix the time on *the one session she already
-wrote up* without losing the note.
+**Why it matters:** it is the difference between a parent seeing `0%` and seeing `—`. It also
+decides whether a closure reduces the *requirement* or only the *opportunities* — the first
+makes the monthly quota elastic, the second makes it a debt she carries into November.
 
-**Assumed meanwhile:** nothing. Not being designed until she answers — `docs/BACKLOG.md` is
-explicit that this one is gated on asking her.
+**Status:** asked three times on 2026-09-06 and not reached before she left. She did settle
+the neighbouring half of it — **a school closure creates no makeup debt for her**, she does
+not owe that time. Whether the child's own record absorbs the closure the same way is the
+part still open.
 
-**Worth telling her:** her current workaround has a trap. Deleting the slot and recreating it
-makes the already-written session disappear from Today entirely. The note is not destroyed —
-it is still on the student's page — but it becomes read-only there, which is why she ends up
-retyping. That defect is being fixed regardless of how she answers.
+**Assumed meanwhile:** nothing. Do not pick the convenient one — the two produce different
+numbers on a document that goes home to a parent.
 
 ---
 
-## 3. Does the Today page open the way you want it?
+## 2. Does makeup debt ever expire?
 
-> Each student's data-entry grid starts folded away, so you see the note first and open the
-> grid when you want it. Is that the right way round, or would you rather everything was open
-> when the page loads?
+> You are a session behind on a child in October and it is still not repaid by June. Does it
+> close out at the end of a grading period or the school year, or does it follow them the
+> whole way?
 
-**Why it matters:** the current behaviour came from Brenden's reading of her workflow, not
-from her using it. It has also never been confirmed by hand.
+**Why it matters:** decides whether the owed figure is bounded or accumulates across the
+year.
 
-**Assumed meanwhile:** left as it is. Not changing it without her.
+**Status:** raised 2026-09-06. Her answer was "unsure for now" and explicitly that we can
+build without it.
 
----
-
-## 4. When you book a makeup, what should it suggest by default?
-
-> Does it make sense to default to that child's usual session time, or is a makeup something
-> you always fit into a specific free period?
-
-**Why it matters:** the plan invents an 11:00 start on the next weekday, which is a guess
-about her timetable.
-
-**Assumed meanwhile:** defaulting to the student's own usual slot time rather than a fixed
-11:00, falling back to 11:00 where they have no slot. Easy to change.
+**Assumed meanwhile:** debt carries forward indefinitely and nothing expires it. This is the
+behaviour that falls out of building the rest and was accepted as a starting point, not a
+decision — it is the smaller commitment, because adding an expiry later closes debts, while
+removing one would have to resurrect them.
 
 ---
 
-## 5. How do your IEPs phrase the required service amount?
+## 3. Where does she look to mark a session she missed?
 
-> Word for word, how is it written — minutes per week, sessions per month, minutes per
-> grading period?
+> It already exists — tap a cell in the attendance grid and below the divider there is
+> "Whole session: I missed it", which sweeps every student on the roster. Where did you go
+> looking for it?
 
-**Why it matters:** gates Stage 2 of attendance (service targets and forward projection).
-Nothing depends on it yet.
+**Why it matters:** she reported having no clear way to mark a session she missed, and the
+feature has been there the whole time. That is a discoverability defect, not a missing
+capability, and the fix depends on where she expected it. The standing guess — worth
+confirming rather than assuming — is that she wanted it on **Today**, at the moment it
+happens, rather than in the attendance grid afterwards.
 
-**Assumed meanwhile:** nothing. Stage 2 is not being built.
-
----
-
-## 6. Over a whole quarter, should the grid show sessions from before a child was in that group?
-
-> The attendance grid fills in every weekday from your current weekly schedule. So if a
-> child joined your Monday group in November and you pull up September to December, every
-> Monday back to September shows as a session that was scheduled and never written up. The
-> same happens if you moved a group from Tuesdays to Thursdays partway through the year.
-> Are those sessions you want to see as "not charted yet", or should the grid start each
-> child where they actually started?
-
-**Why it matters:** the published percentage is the same either way — uncharted sessions are
-out of both lines of it. What changes is the *provisional* flag: the number is set in italics
-with "· N uncharted" beside it whenever anything in the range is unwritten. At month scale
-that flags the transcription she is genuinely behind on. At quarter scale the backwards
-projection fires it on nearly every student, and a flag that applies to everyone stops
-discriminating.
-
-Two readings:
-
-- **Bound the projection by when the child joined the slot.** Weekdays before that draw as
-  "not scheduled" dots instead of empty boxes, the uncharted counts fall, and a student who
-  joined in November shows a plain number over a Q1 range rather than an italic one.
-- **Accept it, and read `uncharted` as "not charted, whenever it was scheduled".** The screen
-  is unchanged: at quarter scale most students carry italics and a large uncharted count, and
-  telling "behind on paperwork" apart from "was not in this group yet" would need something
-  the grid does not currently show.
-
-**Assumed meanwhile:** the current behaviour — the weekly schedule is projected across the
-whole range, and every unwritten weekday in it counts as uncharted. Not being designed
-either way until she answers.
+**Assumed meanwhile:** nothing built. See the entry in `docs/BACKLOG.md`.

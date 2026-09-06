@@ -3145,8 +3145,9 @@ SLP.ui = (() => {
   // Her own usual time is the better guess than a number we invented: a makeup at the
   // hour she already sees this child is the one most likely to be free in both their
   // timetables. 11:00 survives only as the fallback for a student with no slot at all.
-  // Open question 4 in docs/OPEN-QUESTIONS.md — she may well fit makeups into a specific
-  // free period instead, in which case this becomes a fixed time again.
+  // This was open question 4, and 2026-09-06 largely retired it rather than answering it:
+  // what she actually asked for is an ad-hoc session she configures a time and roster for
+  // herself, so the default matters less than it did. Left as-is until that ships.
   function usualStart(slots, studentId) {
     const mine = (slots || [])
       .filter(s => (s.studentIds || []).includes(studentId) && s.startTime)

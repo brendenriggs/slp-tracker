@@ -166,4 +166,7 @@ _Avoid_: release notes, what's new (in prose — it is the panel's heading, not 
   `makeupDuration` sizes a proposed makeup from that figure. See
   `docs/adr/0004-service-requirements-and-attempt-based-debt.md`.
 - **Slot vs Session** was used interchangeably in early prose. They are distinct: the slot
-  is the template, the session is history. Editing one never rewrites the other.
+  is the template, the session is history. Editing one does not rewrite the other — except
+  for the one act she chooses by name, **Fix a typo**, where the plan was wrong all along
+  and so were the sessions written under it. It reaches only the sessions still carrying
+  the slot's old time. See `docs/AUTONOMY.md`.

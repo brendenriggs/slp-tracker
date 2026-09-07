@@ -129,7 +129,7 @@ under "A schedule slot's time cannot be edited" above.
 
 ## A schedule slot's time cannot be edited
 
-**Raised:** 2026-09-02 by Carol Ann · **Status:** unblocked 2026-09-06, ready to design
+**Raised:** 2026-09-02 by Carol Ann · **Status:** done, 2026-09-06 (1.10.0)
 
 > If you put the time in wrong for your schedule, I can't edit it,
 >
@@ -150,6 +150,20 @@ nothing about the existing rule: the schedule is still a plan and a written-up s
 still history. What changes is that correcting a *mistake in the plan* becomes an explicit
 act she can take, rather than something the app refuses and she works around by deleting and
 retyping.
+
+**Shipped 2026-09-06.** (1) and (2) are two buttons in one form behind `Edit time` on a slot
+card; (3) is `Move…` on a session's head in Today. The rule that lets all three coexist:
+**a correction only touches sessions still carrying the slot's old time.** A session moved
+on its own holds a time she chose deliberately and is not a copy of the typo, so the
+correction steps over it — otherwise (1) would silently undo (3) with nothing on screen to
+say so.
+
+Two things came out of building it. `planForDate` sorted the day by the *slot's* start time
+and the head read the slot's time, so a session moved to the afternoon stayed among the
+morning groups wearing a time it no longer kept; a materialized session now outranks its
+slot in both places, the same rule the attendance grid already followed. And the end-after-
+start refusal moved into the store as `assertOrderedTimes` — three call sites write times
+now, and a rule that lives in one form is not a rule.
 
 ---
 

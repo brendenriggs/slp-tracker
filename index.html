@@ -356,7 +356,7 @@
 // SLP Session Tracker — one file, no build step, no network.
 // Sections below are ordered by dependency; each only uses those above it.
 // ============================================================
-window.SLP = { version: '1.9.0' };
+window.SLP = { version: '1.10.0' };
 
 // What changed, in her words. She reads this by choice — the footer stamp opens it and
 // nothing else surfaces it — so every line has to be a sentence about her work, never a
@@ -366,6 +366,14 @@ window.SLP = { version: '1.9.0' };
 // Dates are the day the work landed, local. Versions before 1.6.0 are not listed: the app
 // did not stamp a version until then, so their contents cannot be stated honestly.
 SLP.changelog = [
+  { version: '1.10.0', date: '2026-09-06', notes: [
+      'A slot’s time can be edited. On the Schedule tab, Edit time on a group offers two ' +
+        'things: fix a typo, which also corrects the sessions already written up at the ' +
+        'wrong time, or move the group from here on, which leaves what you wrote as it ' +
+        'happened.',
+      'Move… on a session in Today moves that one session — the weekly group stays where ' +
+        'it is, and the day lists it at its new time.',
+  ] },
   { version: '1.9.0', date: '2026-09-06', notes: [
       'A + Ad-hoc session button on Today, for a session that is not on your weekly ' +
         'schedule: pick the time, the room and who is in it, and it appears on the day ' +
@@ -699,6 +707,18 @@ SLP.store = (() => {
     return session;
   }
 
+  // Said once, thrown from the store rather than only guarded in a form: three call sites
+  // now write times, and a refusal that lives in one of them is not a rule.
+  function assertOrderedTimes(startTime, endTime) {
+    if (!startTime || !endTime) {
+      throw new Error('a time needs both a start and an end: ' +
+                      (startTime || '—') + '–' + (endTime || '—'));
+    }
+    if (endTime <= startTime) {
+      throw new Error('the end must be after the start: ' + startTime + '–' + endTime);
+    }
+  }
+
   async function rowFor(store, sessionId, studentId) {
     const rows = await db.getAllBy(store, 'sessionId', sessionId);
     return rows.find(r => r.studentId === studentId) || null;
@@ -838,6 +858,61 @@ SLP.store = (() => {
       await db.del('slots', id);
     },
 
+    // Changing when a group meets is three different acts, not one — her 2026-09-02
+    // complaint, answered by her on 2026-09-06. Only the first rewrites history, and it
+    // is the one she was actually asking for: she wrote the note, saw the time was wrong,
+    // and the only way to fix it was to delete the slot and retype everything.
+
+    // 1. It was always 09:30 and she typed 09:00, so the sessions written up under the
+    //    typo were never held at that time either — correcting the plan corrects them.
+    //    Only the ones still carrying the old time, though: a session she moved on its
+    //    own holds a time she chose, and is not a copy of the mistake. Overwriting it
+    //    would silently undo that decision, and she would have no way of knowing.
+    async correctSlotTime(id, { startTime, endTime }) {
+      const slot = await db.get('slots', id);
+      if (!slot) throw new Error('unknown slot: ' + id);
+      assertOrderedTimes(startTime, endTime);
+      const was = { startTime: slot.startTime, endTime: slot.endTime };
+      slot.startTime = startTime;
+      slot.endTime = endTime;
+      await db.put('slots', slot);
+
+      let corrected = 0;
+      for (const session of await db.getAllBy('sessions', 'slotId', id)) {
+        if (session.startTime !== was.startTime || session.endTime !== was.endTime) continue;
+        session.startTime = startTime;
+        session.endTime = endTime;
+        await db.put('sessions', session);
+        corrected++;
+      }
+      return { slot, corrected };
+    },
+
+    // 2. The group genuinely moves, from here on. The template is not history: what she
+    //    already wrote up happened when it happened, and nothing about it changes.
+    async moveSlotTime(id, { startTime, endTime }) {
+      const slot = await db.get('slots', id);
+      if (!slot) throw new Error('unknown slot: ' + id);
+      assertOrderedTimes(startTime, endTime);
+      slot.startTime = startTime;
+      slot.endTime = endTime;
+      await db.put('slots', slot);
+      return slot;
+    },
+
+    // 3. This week only. The session already snapshots its own time, so moving one is a
+    //    write to that snapshot and nothing else — the slot it came from is untouched,
+    //    and so is every other week.
+    async moveSession(sessionId, { startTime, endTime }) {
+      const session = await db.get('sessions', sessionId);
+      if (!session) throw new Error('unknown session: ' + sessionId);
+      assertOrderedTimes(startTime, endTime);
+      session.startTime = startTime;
+      session.endTime = endTime;
+      await db.put('sessions', session);
+      return session;
+    },
+
     ensureSession,
 
     // --- the day view ---
@@ -881,7 +956,11 @@ SLP.store = (() => {
             endTime: session.endTime, studentIds: session.roster, location: session.location },
           session));
       }
-      return entries.sort((a, b) => a.slot.startTime.localeCompare(b.slot.startTime));
+      // A materialized session outranks the slot it came from — the same rule the
+      // attendance grid follows. Sorting by the template put a session she had moved to
+      // the afternoon back among the morning ones, reading off a time it no longer keeps.
+      const startOf = e => (e.session && e.session.startTime) || e.slot.startTime;
+      return entries.sort((a, b) => startOf(a).localeCompare(startOf(b)));
     },
 
     // --- the grid ---
@@ -2008,6 +2087,54 @@ SLP.ui = (() => {
   const DAYS = [[1, 'Monday'], [2, 'Tuesday'], [3, 'Wednesday'], [4, 'Thursday'], [5, 'Friday']];
 
   const draft = { studentIds: new Set() };   // survives re-render within the tab
+  let editingSlot = null;                    // the one slot whose time she has open
+
+  // Her 2026-09-02 complaint — "I can't go and fix that without deleting the session and
+  // then have to retype the notes" — is two of the three acts the answer turned out to
+  // need. They share a form because she is typing the same two times either way; they are
+  // two buttons because only one of them reaches back into what she has already written.
+  function slotTimeForm(slot) {
+    const start = h('input', { type: 'time', id: 'slot-edit-start', value: slot.startTime });
+    const end = h('input', { type: 'time', id: 'slot-edit-end', value: slot.endTime });
+
+    const run = (write, done) => async () => {
+      if (!start.value || !end.value) {
+        toast('A slot needs a start and end time.', 'warn'); return;
+      }
+      // Word for word what the slot form below says, and the makeup booking, and the
+      // ad-hoc form on Today. One mistake, one sentence.
+      if (end.value <= start.value) {
+        toast('The end time must be after the start.', 'warn'); return;
+      }
+      const result = await write(slot.id, { startTime: start.value, endTime: end.value });
+      editingSlot = null;
+      toast(done(result), 'ok');
+      await SLP.ui.render();
+    };
+
+    return h('div', { class: 'slot-edit', id: 'slot-edit' },
+      h('div', { class: 'row-form' }, start, 'to', end),
+      // Short on purpose: the card is a fifth of the page wide, and a paragraph here
+      // wraps to six lines and pushes the rest of the day's groups off the screen.
+      h('p', { class: 'muted',
+               text: 'A typo also corrects the sessions already written up. ' +
+                     'Moving leaves them as they were.' }),
+      h('div', { class: 'row-form' },
+        h('button', {
+          class: 'plain', id: 'slot-edit-correct', type: 'button', text: 'Fix a typo',
+          'on:click': run(SLP.store.correctSlotTime, ({ corrected }) => corrected
+            ? 'Time corrected, and so were ' + corrected + ' session' +
+              (corrected === 1 ? '' : 's') + ' already written up.'
+            : 'Time corrected. Nothing had been written up at the old time.'),
+        }),
+        h('button', {
+          class: 'plain', id: 'slot-edit-move', type: 'button', text: 'Move from here on',
+          'on:click': run(SLP.store.moveSlotTime,
+            () => 'Moved. Sessions already written up keep the time they happened at.'),
+        }),
+        h('button', { class: 'linkish', id: 'slot-edit-cancel', type: 'button', text: 'Cancel',
+                      'on:click': async () => { editingSlot = null; await SLP.ui.render(); } })));
+  }
 
   async function slotForm(students) {
     const day = h('select', { id: 'slot-day' },
@@ -2066,14 +2193,21 @@ SLP.ui = (() => {
                 h('div', { class: 'slot-roster',
                            text: slot.studentIds.map(id => byId[id] && byId[id].name)
                                    .filter(Boolean).join(', ') || '(no students)' }),
-                h('button', {
-                  class: 'linkish danger-link delete-slot', type: 'button', text: 'Delete',
-                  'on:click': async () => {
-                    await SLP.store.deleteSlot(slot.id);
-                    toast('Slot deleted. Sessions already charted are untouched.', 'ok');
-                    await SLP.ui.render();
-                  },
-                })))))));
+                // While she is editing the time, the card's own controls step aside:
+                // Delete is not a thing to have under the cursor mid-correction.
+                editingSlot === slot.id ? slotTimeForm(slot) : h('div', { class: 'row-form' },
+                  h('button', {
+                    class: 'linkish edit-slot-time', type: 'button', text: 'Edit time',
+                    'on:click': async () => { editingSlot = slot.id; await SLP.ui.render(); },
+                  }),
+                  h('button', {
+                    class: 'linkish danger-link delete-slot', type: 'button', text: 'Delete',
+                    'on:click': async () => {
+                      await SLP.store.deleteSlot(slot.id);
+                      toast('Slot deleted. Sessions already charted are untouched.', 'ok');
+                      await SLP.ui.render();
+                    },
+                  }))))))));
   }
 
   SLP.ui.views.schedule = async (root) => {
@@ -2652,6 +2786,47 @@ SLP.ui = (() => {
   const adhoc = { open: false, studentIds: new Set() };
   const adhocReset = () => { adhoc.open = false; adhoc.studentIds.clear(); };
 
+  // The third of the three time edits: this week only, the weekly slot untouched. It
+  // belongs here rather than on Schedule because the day is where she notices — the
+  // group ran late today, and the template is not what she wants to argue with.
+  //
+  // Keyed by the slot, or by the session for an ad-hoc entry, because a day can hold
+  // several sections and only one form may be open.
+  let movingSession = null;
+  const entryKey = entry => entry.slot.id || entry.slot.sessionId;
+
+  function sessionMoveForm(entry) {
+    if (movingSession !== entryKey(entry)) return null;
+    const at = entry.session || entry.slot;
+    const start = h('input', { type: 'time', id: 'session-move-start', value: at.startTime });
+    const end = h('input', { type: 'time', id: 'session-move-end', value: at.endTime });
+
+    return h('div', { class: 'row-form session-move', id: 'session-move' },
+      h('span', { class: 'muted', text: 'Move this session only — the weekly slot stays.' }),
+      start, 'to', end,
+      h('button', {
+        class: 'plain', id: 'session-move-save', type: 'button', text: 'Move it',
+        'on:click': async () => {
+          if (!start.value || !end.value) {
+            SLP.ui.toast('A session needs a start and end time.', 'warn'); return;
+          }
+          if (end.value <= start.value) {
+            SLP.ui.toast('The end time must be after the start.', 'warn'); return;
+          }
+          // A day she has not touched yet has no session to move, so moving it is the
+          // thing that makes one — the same lazy materialization every other write here
+          // goes through, and the snapshot it takes is what carries the new time.
+          const session = await SLP.store.ensureSession(SLP.ui.route.date, slotOf(entry));
+          await SLP.store.moveSession(session.id,
+            { startTime: start.value, endTime: end.value });
+          movingSession = null;
+          await SLP.ui.render();
+        },
+      }),
+      h('button', { class: 'linkish', id: 'session-move-cancel', type: 'button', text: 'Cancel',
+                    'on:click': async () => { movingSession = null; await SLP.ui.render(); } }));
+  }
+
   async function adhocForm() {
     if (!adhoc.open) return null;
     const students = await SLP.store.listStudents({ activeOnly: true });
@@ -2751,15 +2926,26 @@ SLP.ui = (() => {
     }
 
     for (const entry of plan) {
+      // A materialized session outranks the slot it came from: once it exists it carries
+      // its own times, and a session she moved reads at the time she moved it to.
+      const at = entry.session || entry.slot;
       const section = h('section', { class: 'slot-section',
                                      'data-slot-id': entry.slot.id || 'adhoc' },
         h('div', { class: 'slot-head' },
-          h('span', { text: entry.slot.startTime + '–' + entry.slot.endTime }),
+          h('span', { text: at.startTime + '–' + at.endTime }),
           entry.slot.location ? h('span', { class: 'muted', text: entry.slot.location }) : null,
           h('span', { class: 'grow' }),
+          h('button', { class: 'linkish move-session', type: 'button', text: 'Move…',
+                        title: 'Move this session without moving the weekly slot',
+                        'on:click': async () => {
+                          movingSession = movingSession === entryKey(entry)
+                            ? null : entryKey(entry);
+                          await SLP.ui.render();
+                        } }),
           SLP.ui.today.addStudentControl
             ? await SLP.ui.today.addStudentControl(entry)
-            : null));
+            : null),
+        sessionMoveForm(entry));
       for (const s of entry.students) section.appendChild(await studentBlock(entry, s));
       root.appendChild(section);
     }

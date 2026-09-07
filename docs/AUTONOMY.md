@@ -129,7 +129,13 @@ here.
   made a forward month look like a wall of overdue work. Split the *drawing* in the view
   (`data-future`) rather than inventing a state — the stored vocabulary stays the four
   statuses plus null, and nothing new has to be persisted or counted.
-- **The template is not history.** Editing a slot never rewrites a past session.
+- **The template is not history**, with exactly one door through the wall. Editing a slot
+  does not rewrite a past session — moving a group changes the weeks from here on and
+  leaves what she wrote as it happened. The single exception is **Fix a typo**, which she
+  chooses by name: the time was always 09:30 and she typed 09:00, so the sessions written
+  under it were never held then either. Even that only touches sessions **still carrying
+  the slot's old time**; a session she moved on its own is a decision, not a copy of the
+  mistake. Do not add a second path that reaches back, and do not widen this one.
 - **Never run anything on her machine.** All manual checks happen on Brenden's.
 - **She will never use git.** This repo is Brenden's history alone.
 

@@ -45,20 +45,24 @@ requirement model above.
 
 ## An ad-hoc session button on Today
 
-**Raised:** 2026-09-06 by Carol Ann · **Status:** ready to design
+**Raised:** 2026-09-06 by Carol Ann · **Status:** done, 2026-09-07 (1.9.0)
 
 > "she should be able to hit an 'ad-hoc session' button at top of the today page that lets
 > her configure a time and students"
 
-She needs to hold a session for one or more students without permanently adding it to the
-weekly schedule. It must behave as a real session — chartable, note-carrying — not a
-reminder.
+Shipped as `+ Ad-hoc session` in the day bar, opening a form for the time, the room and a
+roster ticked off the caseload. The session lands on the day the bar names — no date field,
+because the page has already answered that — and `store.createAdHocSession` writes what
+`bookMakeup` writes minus the makeup row, so planForDate folds it into Today with no further
+work. **No attendance row is written**: a row would be an outcome she has not entered, and
+uncharted is the honest state.
 
-The domain already has **Ad-hoc session** and `deleteSlot` already folds orphaned sessions
-back into Today through that path, so the model supports this; the affordance is what is
-missing. Note the interaction with attempt-based debt: adding a student to a session they
-were not scheduled for *is* an attempt, so this button repays debt as a side effect of
-ordinary use. That is intended, per ADR 0004.
+The button is above the empty-day message on purpose: a day with nothing scheduled is
+exactly when she reaches for it.
+
+Still true, and still intended: per ADR 0004 a student on a session they were not scheduled
+for is an **Attempt**, so this button will repay debt as a side effect of ordinary use once
+the requirement model derives that from the roster. Nothing is flagged at write time.
 
 ---
 

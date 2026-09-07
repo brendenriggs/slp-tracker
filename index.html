@@ -347,7 +347,7 @@
 // SLP Session Tracker — one file, no build step, no network.
 // Sections below are ordered by dependency; each only uses those above it.
 // ============================================================
-window.SLP = { version: '1.8.0' };
+window.SLP = { version: '1.9.0' };
 
 // ============================================================
 // SECTION: db — IndexedDB access. Knows stores, not meaning.
@@ -956,6 +956,25 @@ SLP.store = (() => {
         participation: 'scheduled', isMakeup: true });
       await db.put('attendance', attendance);
       return { session, attendance };
+    },
+
+    // A session she configures herself, on the day she is looking at, for whoever she
+    // is actually seeing — her ask of 2026-09-06. Structurally it is what bookMakeup
+    // writes, minus the makeup row: a session with no slot, which planForDate already
+    // folds into Today and Schedule never shows, because Schedule is the recurring week.
+    //
+    // No attendance is written at all. bookMakeup writes a null-status row because that
+    // row has to carry `isMakeup`; here there is nothing to carry, and a row would be an
+    // outcome she has not entered. Uncharted is the honest state until she charts it.
+    //
+    // Per ADR 0004 a student on a session they were not scheduled for is an Attempt, and
+    // this is how she will make most of them. That is derived from the roster when the
+    // requirement model lands — nothing is flagged here.
+    async createAdHocSession({ date, startTime, endTime, location = '', studentIds }) {
+      const session = m.session({ date, slotId: null, startTime, endTime, location,
+                                  roster: [...studentIds] });
+      await db.put('sessions', session);
+      return session;
     },
 
     // Same reasoning as deleteObjective: a session removed without its rows leaves
@@ -2545,11 +2564,79 @@ SLP.ui = (() => {
     return block;
   }
 
+  // Her ask of 2026-09-06: a session she configures a time and students for, from the
+  // page she is already on. Which day it lands on is the day the bar above it names —
+  // a date field here would be a second answer to a question the page has answered.
+  //
+  // Open-or-not plus a roster, like the schedule's own slot draft; the times are read
+  // off the inputs when she saves, so nothing half-typed survives a render pretending
+  // to be a booking.
+  const adhoc = { open: false, studentIds: new Set() };
+  const adhocReset = () => { adhoc.open = false; adhoc.studentIds.clear(); };
+
+  async function adhocForm() {
+    if (!adhoc.open) return null;
+    const students = await SLP.store.listStudents({ activeOnly: true });
+
+    const start = h('input', { type: 'time', id: 'adhoc-start', value: '09:00' });
+    const end = h('input', { type: 'time', id: 'adhoc-end', value: '09:30' });
+    const where = h('input', { type: 'text', id: 'adhoc-location',
+                               placeholder: 'Room (optional)' });
+
+    // The schedule's picker, in its own panel: she is choosing from the caseload either
+    // way, and one control that behaves two ways would be the surprise.
+    const picker = h('div', { id: 'adhoc-students', style: 'margin:10px 0' },
+      students.length
+        ? students.map(s => {
+            const box = h('input', { type: 'checkbox', 'data-student-id': s.id });
+            box.checked = adhoc.studentIds.has(s.id);
+            box.addEventListener('change', () => {
+              box.checked ? adhoc.studentIds.add(s.id) : adhoc.studentIds.delete(s.id);
+            });
+            return h('label', { class: 'slot-student', 'data-student-id': s.id }, box, s.name);
+          })
+        : h('span', { class: 'muted', text: 'Nobody on the caseload yet.' }));
+
+    return h('section', { class: 'panel', id: 'adhoc-form' },
+      h('h2', { text: 'Ad-hoc session · ' + longDate(SLP.ui.route.date) }),
+      h('p', { class: 'muted',
+               text: 'Not on the weekly schedule — it happens once, on this day.' }),
+      h('div', { class: 'row-form' }, start, 'to', end, where),
+      picker,
+      // The pair lives in a row-form for its 8px gap: as bare children of the panel the
+      // two buttons abutted, and Cancel read as the tail of the Add session label.
+      h('div', { class: 'row-form' },
+        h('button', {
+          class: 'primary', id: 'adhoc-save', type: 'button', text: 'Add session',
+          'on:click': async () => {
+            const ids = [...adhoc.studentIds];
+            // Each sentence is the one the app already uses for that mistake elsewhere —
+            // the schedule form at the slot it is the sibling of.
+            if (!ids.length) {
+              SLP.ui.toast('Put at least one student in the session.', 'warn'); return;
+            }
+            if (!start.value || !end.value) {
+              SLP.ui.toast('A session needs a start and end time.', 'warn'); return;
+            }
+            if (end.value <= start.value) {
+              SLP.ui.toast('The end time must be after the start.', 'warn'); return;
+            }
+            await SLP.store.createAdHocSession({
+              date: SLP.ui.route.date, startTime: start.value, endTime: end.value,
+              location: where.value.trim(), studentIds: ids });
+            adhocReset();
+            await SLP.ui.render();
+          },
+        }),
+        h('button', { class: 'linkish', id: 'adhoc-cancel', type: 'button', text: 'Cancel',
+                      'on:click': async () => { adhocReset(); await SLP.ui.render(); } })));
+  }
+
   SLP.ui.views.today = async (root) => {
     const date = SLP.ui.route.date;
     // A different day is a fresh page. Only re-renders of the day she is on keep
     // their open cards.
-    if (date !== expandedFor) { expanded.clear(); expandedFor = date; }
+    if (date !== expandedFor) { expanded.clear(); adhocReset(); expandedFor = date; }
     const plan = await SLP.store.planForDate(date);
     const { charted, total } = SLP.derive.chartedCount(plan);
 
@@ -2563,8 +2650,19 @@ SLP.ui = (() => {
                     'on:click': () => SLP.ui.go({ date: shiftDate(date, 1) }) }),
       h('button', { class: 'plain', id: 'jump-today', type: 'button', text: 'Today',
                     'on:click': () => SLP.ui.go({ date: SLP.ui.todayStr() }) }),
+      h('button', { class: 'plain', id: 'adhoc-open', type: 'button', text: '+ Ad-hoc session',
+                    title: 'A session that is not on the weekly schedule',
+                    'on:click': async () => {
+                      adhoc.open = !adhoc.open;
+                      await SLP.ui.render();
+                    } }),
       h('span', { class: 'grow' }),
       h('span', { id: 'charted-count', text: charted + ' of ' + total + ' charted' })));
+
+    // Above the day, and above the empty state: a day with nothing scheduled on it is
+    // exactly when she reaches for this, so it cannot live below the early return.
+    const form = await adhocForm();
+    if (form) root.appendChild(form);
 
     if (!plan.length) {
       const noSlots = (await SLP.store.listSlots()).length === 0;
@@ -3165,7 +3263,9 @@ SLP.ui = (() => {
   // timetables. 11:00 survives only as the fallback for a student with no slot at all.
   // This was open question 4, and 2026-09-06 largely retired it rather than answering it:
   // what she actually asked for is an ad-hoc session she configures a time and roster for
-  // herself, so the default matters less than it did. Left as-is until that ships.
+  // herself. That shipped in 1.9.0 as the button on Today, and it did not displace this:
+  // booking a makeup still starts from the Owed column on the grid, where she is looking
+  // at the debt, and a guessed start beats an empty box there.
   function usualStart(slots, studentId) {
     const mine = (slots || [])
       .filter(s => (s.studentIds || []).includes(studentId) && s.startTime)

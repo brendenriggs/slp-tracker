@@ -3252,10 +3252,13 @@ SLP.ui = (() => {
       // cell or Owed button is clicked.
       onChange: () => { ui.marking = null; ui.booking = null; SLP.ui.render(); },
     });
-    const shown = new Set(filters.shown.map(s => s.id));
-
-    const grid = SLP.derive.attendanceGrid(data);
-    grid.rows = grid.rows.filter(r => shown.has(r.student.id));
+    // Filter first, then derive. The rows are independent of one another — the columns
+    // come off the sessions, and each row's arithmetic reads only its own cells — so
+    // narrowing the caseload before the call gives the identical grid for the cost of
+    // what she can see. Deriving all 49 and discarding 48 was the same picture at the
+    // same price whatever she searched for.
+    const grid = SLP.derive.attendanceGrid(
+      Object.assign({}, data, { students: filters.shown }));
 
     root.appendChild(h('section', { class: 'panel panel-wide' },
       h('h2', { text: 'Attendance' }),
@@ -3300,10 +3303,16 @@ SLP.ui = (() => {
 
     const data = await SLP.store.attendanceRange({
       from: detail.range.from, to: detail.range.to, today: SLP.ui.todayStr() });
-    const grid = SLP.derive.attendanceGrid(data);
-    const row = grid.rows.find(r => r.student.id === student.id);
-    const pct = row ? row.pct : { pct: null, heldSessions: 0, offeredSessions: 0, uncharted: 0 };
-    const owed = row ? row.owed.owed : 0;
+    // A caseload of one. The page displays a single row, and handing the whole caseload
+    // to a caseload-wide function to read it derived forty-eight more — the same number,
+    // for forty-nine times the work, on the page she opens most. `rows` is `students`
+    // mapped, so a one-student caseload is exactly one row and the "she has no row"
+    // fallback this carried is now unreachable rather than merely unlikely.
+    const grid = SLP.derive.attendanceGrid(
+      Object.assign({}, data, { students: [student] }));
+    const row = grid.rows[0];
+    const pct = row.pct;
+    const owed = row.owed.owed;
 
     container.appendChild(h('section', { class: 'panel', id: 'student-attendance' },
       h('h2', { text: 'Attendance' }),

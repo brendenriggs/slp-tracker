@@ -963,3 +963,46 @@ test('the legend is built from the glyph table, so it cannot drift from the grid
     assert(legend.textContent.toLowerCase().includes(word), 'legend names ' + word);
   }
 });
+
+// Records the caseload size handed to each attendanceGrid call. The waste these two
+// tests pin is invisible in the output — the arithmetic is per-student, so deriving
+// forty-nine rows and reading one gives the same answer as deriving one — which is
+// exactly why it survived four handoffs. The work done IS the behaviour here.
+function attUiGridCalls(w) {
+  const real = w.SLP.derive.attendanceGrid;
+  const calls = [];
+  w.SLP.derive.attendanceGrid = data => {
+    calls.push(((data || {}).students || []).length);
+    return real(data);
+  };
+  return calls;
+}
+
+test('a student’s page derives her row alone, not the whole caseload', async () => {
+  const w = await loadApp();
+  const { ada } = await attUiSeed(w);
+  const calls = attUiGridCalls(w);
+
+  const doc = await attUiOpenStudent(w, ada);
+  assert(doc.querySelector('#student-attendance-pct'), 'the panel rendered');
+  assert(calls.length, 'and it went through attendanceGrid');
+  eq(calls, calls.map(() => 1),
+     'one row is displayed, so one row is what it should cost — got ' + calls.join(','));
+});
+
+test('the grid derives the rows the filters leave, not the ones it will throw away', async () => {
+  const w = await loadApp();
+  const { ada, bo } = await attUiSeed(w);
+  const doc = await attUiOpen(w, '2026-10-05', '2026-10-09');
+  const calls = attUiGridCalls(w);
+
+  const search = doc.querySelector('#attendance-search');
+  search.value = 'Ada';
+  search.dispatchEvent(new w.Event('input'));
+  await w.SLP.ui.render();
+
+  eq(calls[calls.length - 1], 1,
+     'Bo is filtered out before the arithmetic, not after — got ' + calls.join(','));
+  assert(attUiRow(w.document, ada), 'Ada still has a row');
+  assert(!attUiRow(w.document, bo), 'and Bo still has none');
+});

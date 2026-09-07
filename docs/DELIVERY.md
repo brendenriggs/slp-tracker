@@ -29,6 +29,13 @@ Nothing to send, nothing for her to save.
 To confirm she actually has an update, ask her to read the version in the bottom-right
 corner of the page. If it is stale, a hard refresh (Ctrl+Shift+R) settles it.
 
+That stamp also opens the changelog — pressing it expands **What's new**, newest release
+first, in the page rather than over it. **Nothing announces a release to her**: no banner,
+no badge, no dialog. So an update she would want to know about still has to be mentioned
+by Brenden; the changelog is what she reads when she goes looking, not a notification.
+Every release needs a line there before it ships — `tests/changelog.test.js` fails a
+version the changelog does not describe.
+
 ## The one-time move from the emailed file
 
 Her data lives in the browser, keyed to the origin it was created under. The old copy ran

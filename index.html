@@ -214,6 +214,15 @@
                     color: var(--accent); text-decoration: underline; cursor: pointer; }
   button.linklike:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   #backup-more { flex: 0 0 auto; text-decoration: none; }
+  /* The changelog reads left to right like everything else, even though the stamp that
+     opens it is right-aligned in the footer. */
+  .changelog { text-align: left; margin-top: 10px; }
+  .changelog .release { margin: 0 0 14px; }
+  .changelog .release:last-child { margin-bottom: 0; }
+  .changelog .release-head { margin: 0 0 4px; font-weight: 600; font-size: 13px; }
+  .changelog .release-notes { margin: 0; padding-left: 18px; color: var(--muted);
+                              font-size: 13px; }
+  .changelog .release-notes li { margin: 0 0 4px; }
   #backup-more-panel { display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
                        padding: 8px 11px; margin-bottom: 10px; font-size: 13px;
                        background: var(--row); border-radius: 6px; }
@@ -348,6 +357,42 @@
 // Sections below are ordered by dependency; each only uses those above it.
 // ============================================================
 window.SLP = { version: '1.9.0' };
+
+// What changed, in her words. She reads this by choice — the footer stamp opens it and
+// nothing else surfaces it — so every line has to be a sentence about her work, never a
+// commit subject. Newest first; the top entry is always the running version, which is
+// pinned in tests/changelog.test.js so a release cannot ship saying nothing about itself.
+//
+// Dates are the day the work landed, local. Versions before 1.6.0 are not listed: the app
+// did not stamp a version until then, so their contents cannot be stated honestly.
+SLP.changelog = [
+  { version: '1.9.0', date: '2026-09-06', notes: [
+      'A + Ad-hoc session button on Today, for a session that is not on your weekly ' +
+        'schedule: pick the time, the room and who is in it, and it appears on the day ' +
+        'you are looking at.',
+      'This list. The version number at the foot of the page opens it.',
+  ] },
+  { version: '1.8.0', date: '2026-09-06', notes: [
+      'Attendance percentages count sessions instead of minutes, so a 30-minute session ' +
+        'and a 60-minute one weigh the same.',
+      'A makeup a child skipped now counts as repaid — you offered it.',
+  ] },
+  { version: '1.7.0', date: '2026-09-03', notes: [
+      'The Attendance tab: your paper grid, with the arithmetic done — a mark per ' +
+        'session, a percentage per child, and the makeup time you are owed.',
+      'Arrows above the grid slide the window a week or a month at a time.',
+      'Each child’s own page carries the same percentage, over a range you pick, ' +
+        'beside the notes you are writing.',
+      'Booking a makeup from the Owed column, on a date and at a time you choose.',
+  ] },
+  { version: '1.6.0', date: '2026-09-02', notes: [
+      'The app is served from a web address instead of a file, and the version number ' +
+        'at the foot of the page says which copy you are on.',
+      'Deleting a slot no longer hides the sessions already written up against it.',
+      'Objective charts scale past the criterion line instead of clipping your best ' +
+        'session off the top.',
+  ] },
+];
 
 // ============================================================
 // SECTION: db — IndexedDB access. Knows stores, not meaning.
@@ -1777,6 +1822,27 @@ SLP.ui = (() => {
     }
   }
 
+  // Shut on every load. In memory only, like the open cards on Today: this is whether
+  // she is reading it right now, not a preference worth keeping.
+  let changelogOpen = false;
+
+  const RELEASE_DAY = { year: 'numeric', month: 'long', day: 'numeric' };
+  const releaseDate = ds => {
+    const [y, m, d] = ds.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString(undefined, RELEASE_DAY);
+  };
+
+  function changelogPanel() {
+    return h('section', { class: 'panel changelog', id: 'changelog' },
+      h('h2', { text: 'What’s new' }),
+      SLP.changelog.map(release =>
+        h('div', { class: 'release', 'data-version': release.version },
+          h('p', { class: 'release-head',
+                   text: 'v' + release.version + ' · ' + releaseDate(release.date) }),
+          h('ul', { class: 'release-notes' },
+            release.notes.map(note => h('li', { text: note }))))));
+  }
+
   async function doRender() {
     const app = $('#app');
     const place = route.tab + '/' + (route.studentId || '') + '/' + (route.date || '');
@@ -1803,9 +1869,21 @@ SLP.ui = (() => {
     if (view) await view(root);
     else root.appendChild(h('p', { class: 'empty', text: 'Nothing here yet.' }));
 
-    // Version stamp. The app is hosted now, so "did you get the update?" has to be
-    // answerable over the phone — she reads this number back.
-    app.appendChild(h('p', { class: 'app-version', text: 'v' + SLP.version }));
+    // Version stamp, and the only way into the changelog. The app is hosted now, so
+    // "did you get the update?" has to be answerable over the phone — she reads this
+    // number back — and the number is also the honest place to ask what came with it.
+    //
+    // Quiet by construction: the foot of the page, the muted type it always had, shut
+    // until she presses it, and it opens *in* the page. Nothing announces a release to
+    // her, because a release is not something she asked to be interrupted for.
+    app.appendChild(h('p', { class: 'app-version' },
+      h('button', { class: 'linklike', id: 'changelog-toggle', type: 'button',
+                    'aria-expanded': String(changelogOpen),
+                    'aria-controls': 'changelog',
+                    text: 'v' + SLP.version + (changelogOpen ? ' · hide what’s new'
+                                                             : ' · what’s new'),
+                    'on:click': () => { changelogOpen = !changelogOpen; render(); } })));
+    if (changelogOpen) app.appendChild(changelogPanel());
 
     window.scrollTo(0, y);
     restoreFocus(focus);

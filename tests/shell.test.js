@@ -189,7 +189,11 @@ test('the footer stamps the version she reads back over the phone', async () => 
   const w = await loadApp();
   const stamp = w.document.querySelector('.app-version');
   assert(stamp, 'the version stamp renders');
-  eq(stamp.textContent, 'v' + w.SLP.version, 'and shows the running version');
+  // The stamp became the way into the changelog in 1.9.0, so it carries a few words
+  // after the number. What this test is for is unchanged and still asserted: the number
+  // is there, and it is the first thing she reads off the line.
+  assert(stamp.textContent.startsWith('v' + w.SLP.version),
+     'the running version, first — got ' + stamp.textContent);
 });
 
 test('the version stamp survives a tab switch', async () => {

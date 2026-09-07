@@ -117,6 +117,12 @@ The hosted app while the clinician has not been given its URL. Nobody is watchin
 The single act of giving her the URL, which turns the hosted app into the copy she works
 in. Requires a data migration, because her records do not cross origins.
 
+**Changelog**:
+What changed, release by release, in her language. Reached only by pressing the version
+stamp at the foot of the page, and shown in the page rather than over it. Nothing
+announces a release to her.
+_Avoid_: release notes, what's new (in prose — it is the panel's heading, not the term)
+
 ## Relationships
 
 - A **Slot** recurs weekly and materializes many **Sessions**

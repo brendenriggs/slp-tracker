@@ -43,9 +43,28 @@ requirement model above.
 
 ---
 
+## A changelog she can read if she wants to
+
+**Raised:** 2026-09-06 by Brenden · **Status:** done, 2026-09-06 (1.9.0)
+
+> "we should be having a changelog that she can read if she wants to. noninvasive, she has
+> to click a button to see it. not a popup."
+
+The version stamp at the foot of the page became the button. Pressing it expands **What's
+new** in the page's own flow — no dialog, no overlay, nothing that covers what she was
+reading — and pressing it again puts it away. Shut on every load.
+
+The entries live in `SLP.changelog` at the top of `index.html`, newest first, and are
+sentences about her work rather than commit subjects; `tests/changelog.test.js` pins both
+(a release the changelog does not describe fails the suite, and so does a line that starts
+`feat:`). Versions before 1.6.0 are deliberately absent — the app did not stamp a version
+until then, so their contents cannot be stated honestly.
+
+---
+
 ## An ad-hoc session button on Today
 
-**Raised:** 2026-09-06 by Carol Ann · **Status:** done, 2026-09-07 (1.9.0)
+**Raised:** 2026-09-06 by Carol Ann · **Status:** done, 2026-09-06 (1.9.0)
 
 > "she should be able to hit an 'ad-hoc session' button at top of the today page that lets
 > her configure a time and students"

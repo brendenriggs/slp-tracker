@@ -396,6 +396,9 @@ SLP.changelog = [
         'left blank stays visible afterwards rather than being tidied away.',
       'A student can have more than one assessment over the years. The one you are ' +
         'working on is the one you see; the finished ones fold away underneath it.',
+      'If the app is ever open in two tabs when an update lands, the page now tells you ' +
+        'so and offers a Reload, instead of sitting there empty. Nothing is lost when ' +
+        'that happens.',
   ] },
   { version: '1.11.0', date: '2026-09-11', notes: [
       'Today can say a session was one you missed, not one the child missed. Each ' +
@@ -464,8 +467,18 @@ SLP.db = (() => {
   const STORES = Object.keys(SCHEMA);
 
   let dbPromise = null;
+  // Set when another tab has upgraded the database out from under this one. The records are
+  // fine; this tab's code is the stale thing, and it must say so rather than keep reading a
+  // shape it no longer understands.
+  let stale = false;
+
+  const STALE = 'This tab is running an older version of the app. ' +
+                'Reload the page to catch up — nothing has been lost.';
+  const BLOCKED = 'This app is open in another tab running an older version. ' +
+                  'Close the other tabs and reload this page — nothing has been lost.';
 
   function open() {
+    if (stale) return Promise.reject(new Error(STALE));
     if (dbPromise) return dbPromise;
     dbPromise = new Promise((resolve, reject) => {
       const req = indexedDB.open(DB_NAME, DB_VERSION);
@@ -480,9 +493,20 @@ SLP.db = (() => {
           }
         }
       };
-      req.onsuccess = () => resolve(req.result);
+      req.onsuccess = () => {
+        const db = req.result;
+        // Yield to a newer version rather than wedge the tab she is actually using. Without
+        // this, a tab left open on an older version holds the database at the version it
+        // knew, and the reloaded tab is refused and renders nothing at all — found by
+        // probing a real 1.11.0 to 1.12.0 upgrade, which no test could see because every
+        // test starts from a wiped database and so never upgrades.
+        db.onversionchange = () => { stale = true; dbPromise = null; db.close(); };
+        resolve(db);
+      };
       req.onerror = () => reject(req.error);
-      req.onblocked = () => reject(new Error('IndexedDB upgrade blocked by another tab'));
+      // Reachable only against a tab too old to carry the handler above, which is any tab
+      // open on 1.11.0 or earlier. It is a sentence she can act on, not a diagnosis.
+      req.onblocked = () => reject(new Error(BLOCKED));
     });
     return dbPromise;
   }
@@ -2279,8 +2303,23 @@ SLP.ui = (() => {
     return { el: h('div', { class: 'student-filters' }, search, grade, school), shown };
   }
 
+  // The app could not start. A blank page is the worst possible answer for someone whose
+  // records are her job — it looks exactly like losing everything. This says what happened
+  // and what to do, and it is deliberately plain: no tabs, no controls, nothing that needs
+  // a database that is not there.
+  function fatal(message) {
+    const app = $('#app');
+    if (!app) return;
+    clear(app);
+    app.appendChild(h('section', { class: 'panel', id: 'fatal' },
+      h('h2', { text: 'The app could not open' }),
+      h('p', { text: message }),
+      h('button', { class: 'primary', id: 'fatal-reload', type: 'button', text: 'Reload',
+                    'on:click': () => window.location.reload() })));
+  }
+
   return { $, $$, clear, h, route, go, render, views, toast, todayStr, gradeSelect,
-           studentFilters };
+           studentFilters, fatal };
 })();
 
 // ============================================================
@@ -4574,7 +4613,14 @@ SLP.ui = (() => {
 // SECTION: boot — wire everything up.
 // ============================================================
 SLP.ready = (async () => {
-  await SLP.db.open();
+  // A database that will not open must not leave her looking at nothing. It resolves either
+  // way so the page always reaches a state it can explain.
+  try {
+    await SLP.db.open();
+  } catch (e) {
+    SLP.ui.fatal(e.message);
+    return;
+  }
   await SLP.ui.render();
 })();
 </script>

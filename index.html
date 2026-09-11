@@ -1406,6 +1406,38 @@ SLP.derive = (() => {
     return stamp(new Date(y, mo - 1, d + n));
   }
 
+  // 60 calendar days, from the day the assessment was ordered — which is the day of the
+  // IEP meeting, settled 2026-09-11. The number lives here and nowhere else, so if she ever
+  // says it varies by district it becomes a field on the record with one call site to change.
+  const ASSESSMENT_DAYS = 60;
+
+  // Whole days between two local dates, without touching a clock. Subtracting timestamps
+  // gets this wrong across a daylight-saving boundary, where a "day" is 23 or 25 hours;
+  // both ends are read as UTC midnight instead, so a day is always a day.
+  function dayNumber(dateStr) {
+    const [y, mo, d] = dateStr.split('-').map(Number);
+    return Math.round(Date.UTC(y, mo - 1, d) / 86400000);
+  }
+
+  // `today` is required rather than defaulted. A default would read the real clock from
+  // inside derive, which is exactly what makes a date function untestable — the suite pins
+  // SLP.ui.todayStr instead and passes the result in.
+  function assessmentDue(assessment, today) {
+    if (!assessment) throw new Error('assessmentDue needs an assessment');
+    if (!today) throw new Error('assessmentDue needs today\'s date, as YYYY-MM-DD');
+    const dueOn = addDays(assessment.orderedOn, ASSESSMENT_DAYS);
+    const daysLeft = dayNumber(dueOn) - dayNumber(today);
+    const comps = assessment.components || [];
+    return {
+      dueOn,
+      daysLeft,
+      // The due date itself is a day she still has. Only the day after is late.
+      overdue: daysLeft < 0,
+      done: comps.filter(c => !!c.date).length,
+      of: comps.length,
+    };
+  }
+
   // The day clamps: there is no February 31st, so Mar 31 back one month is Feb 28.
   function addMonths(dateStr, n) {
     const [y, mo, d] = dateStr.split('-').map(Number);
@@ -1638,7 +1670,7 @@ SLP.derive = (() => {
 
   return { studentState, chartedCount, objectivesCharted, series, mastery, pair, minutesOf,
            makeupBalance, attendancePct, attendanceGrid, schools, canonicalSchool, monthRange,
-           makeupDuration, shiftRangeWeeks, shiftRangeMonths };
+           makeupDuration, shiftRangeWeeks, shiftRangeMonths, assessmentDue };
 })();
 
 // ============================================================

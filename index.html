@@ -415,7 +415,7 @@ SLP.changelog = [
 // ============================================================
 SLP.db = (() => {
   const DB_NAME = 'slp-tracker';
-  const DB_VERSION = 1;
+  const DB_VERSION = 2;
 
   // store name -> index definitions
   const SCHEMA = {
@@ -427,6 +427,7 @@ SLP.db = (() => {
     attendance: ['sessionId', 'studentId'],
     notes:      ['sessionId', 'studentId'],
     datapoints: ['sessionId', 'studentId', 'objectiveId'],
+    assessments:['studentId'],
     meta:       [],
   };
   const STORES = Object.keys(SCHEMA);
@@ -1647,7 +1648,16 @@ SLP.derive = (() => {
 // ============================================================
 SLP.backup = (() => {
   const db = SLP.db, m = SLP.model;
-  const SCHEMA_VERSION = 1;
+  const SCHEMA_VERSION = 2;
+
+  // Which schema version each store arrived in. A backup file is checked against the stores
+  // that existed at the version the file itself declares, so a file she wrote before a store
+  // existed restores cleanly — while a file claiming the current version is still required to
+  // carry everything. Softening the check instead would turn "your file is damaged" into
+  // "restored, minus whatever was missing", which is the one thing this section exists to
+  // prevent. Every store not listed here has been there since version 1.
+  const STORE_SINCE = { assessments: 2 };
+  const storeSince = name => STORE_SINCE[name] || 1;
 
   const pad = n => String(n).padStart(2, '0');
   function today() {
@@ -1757,6 +1767,7 @@ SLP.backup = (() => {
     }
     for (const store of db.STORES) {
       if (store === 'meta') continue;
+      if (storeSince(store) > parsed.schemaVersion) continue;   // not yet invented when this was written
       if (!Array.isArray(parsed.data[store])) {
         throw new Error('That backup is incomplete — the "' + store +
                         '" section is missing. Nothing was changed.');
@@ -1765,7 +1776,7 @@ SLP.backup = (() => {
     const counts = {};
     for (const store of db.STORES) {
       if (store === 'meta') continue;
-      counts[store] = parsed.data[store].length;
+      counts[store] = (parsed.data[store] || []).length;
     }
     return { parsed, counts, exportedAt: parsed.exportedAt || null };
   }
@@ -1776,7 +1787,7 @@ SLP.backup = (() => {
     const restored = {};
     for (const store of db.STORES) {
       if (store === 'meta') continue;
-      const rows = parsed.data[store];
+      const rows = parsed.data[store] || [];
       if (rows.length) await db.bulkPut(store, rows);
       restored[store] = rows.length;
     }

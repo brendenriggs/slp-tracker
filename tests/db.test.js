@@ -62,3 +62,14 @@ test('data written by one app load is visible to the next', async () => {
   const got = await w2.SLP.db.get('students', 'persist1');
   eq(got && got.name, 'Ada', 'data should survive a reload');
 });
+
+test('assessments are a store of their own, findable by student', async () => {
+  const w = await loadApp();
+  assert(w.SLP.db.STORES.includes('assessments'), 'the app knows the assessments store');
+  await w.SLP.db.put('assessments',
+    { id: 'as_1', studentId: 's1', orderedOn: '2026-09-11', components: [], finishedOn: null });
+  await w.SLP.db.put('assessments',
+    { id: 'as_2', studentId: 's2', orderedOn: '2026-09-12', components: [], finishedOn: null });
+  const mine = await w.SLP.db.getAllBy('assessments', 'studentId', 's1');
+  eq(mine.map(a => a.id), ['as_1'], 'the studentId index finds only that student\'s');
+});

@@ -371,7 +371,7 @@
 // SLP Session Tracker — one file, no build step, no network.
 // Sections below are ordered by dependency; each only uses those above it.
 // ============================================================
-window.SLP = { version: '1.11.0' };
+window.SLP = { version: '1.12.0' };
 
 // What changed, in her words. She reads this by choice — the footer stamp opens it and
 // nothing else surfaces it — so every line has to be a sentence about her work, never a
@@ -381,6 +381,22 @@ window.SLP = { version: '1.11.0' };
 // Dates are the day the work landed, local. Versions before 1.6.0 are not listed: the app
 // did not stamp a version until then, so their contents cannot be stated honestly.
 SLP.changelog = [
+  { version: '1.12.0', date: '2026-09-11', notes: [
+      'A student’s page can now track an assessment. Put in the date it was ordered and ' +
+        'the page works out the date it has to be finished, 60 calendar days later, and ' +
+        'says how long you have left — or how far over you are.',
+      'Each of the nine parts — background history, classroom observation, language ' +
+        'sample, narrative sample, formal assessment, teacher interview, assessment ' +
+        'written, uploaded and billed — keeps the date you did it, not just a tick, ' +
+        'because those are the dates you have to report.',
+      'Tick a part to fill in today, or type the day it actually happened if you are ' +
+        'catching up later. The tick and the date are the same fact, so changing one ' +
+        'changes the other.',
+      'You decide when an assessment is finished, even if a part never applied. What was ' +
+        'left blank stays visible afterwards rather than being tidied away.',
+      'A student can have more than one assessment over the years. The one you are ' +
+        'working on is the one you see; the finished ones fold away underneath it.',
+  ] },
   { version: '1.11.0', date: '2026-09-11', notes: [
       'Today can say a session was one you missed, not one the child missed. Each ' +
         'session on the day has “I missed this session” next to Move — it marks the ' +

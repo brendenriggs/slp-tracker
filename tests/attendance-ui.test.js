@@ -589,7 +589,7 @@ test('a cleared date on the student page says so too', async () => {
 // because the changelog names one shipment per version.
 test('the version records that Attendance shipped', async () => {
   const w = await loadApp();
-  eq(w.SLP.version, '1.11.0', 'a new tab or a change to her headline number is a minor bump');
+  eq(w.SLP.version, '1.12.0', 'a new tab or a change to her headline number is a minor bump');
 });
 
 // A classList check alone cannot fail on the real defect here — .att-pct-provisional was

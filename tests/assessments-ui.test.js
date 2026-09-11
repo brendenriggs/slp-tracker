@@ -120,3 +120,106 @@ test('a finished assessment leaves the tracker and becomes history', async () =>
   assert(earlier && /1/.test(earlier.textContent),
          'but it is counted as history, got: ' + (earlier && earlier.textContent));
 });
+
+function assessClick(el) {
+  el.dispatchEvent(new el.ownerDocument.defaultView.MouseEvent('click', { bubbles: true }));
+}
+function assessSetInput(el, value) {
+  el.value = value;
+  el.dispatchEvent(new el.ownerDocument.defaultView.Event('input', { bubbles: true }));
+  el.dispatchEvent(new el.ownerDocument.defaultView.Event('change', { bubbles: true }));
+}
+
+test('ordering an assessment from her page opens one', async () => {
+  const w = await loadApp();
+  w.SLP.ui.todayStr = () => '2026-09-11';
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Ada' }));
+  const [ada] = await w.SLP.db.getAll('students');
+  const doc = await assessOpenStudent(w, ada.id);
+  assessSetInput(doc.querySelector('#assess-order-date'), '2026-09-11');
+  assessClick(doc.querySelector('#assess-order'));
+  await w.SLP.ui.render();
+  const as = await w.SLP.store.activeAssessment(ada.id);
+  eq(as.orderedOn, '2026-09-11', 'the date she typed is the date stored');
+  assert(w.document.querySelector('#assessment-due'), 'and the tracker replaced the form');
+});
+
+test('ticking a component stamps today, not a flag', async () => {
+  const w = await loadApp();
+  w.SLP.ui.todayStr = () => '2026-09-20';
+  const { student, as } = await assessSeedWithOrder(w, '2026-09-11');
+  const doc = await assessOpenStudent(w, student.id);
+  assessClick(doc.querySelector('#assess-languageSample-done'));
+  await w.SLP.ui.render();
+  const stored = await w.SLP.db.get('assessments', as.id);
+  eq(stored.components.find(c => c.key === 'languageSample').date, '2026-09-20',
+     'the box wrote the date, and the date is the only record of it being done');
+});
+
+test('unticking clears the date back to nothing', async () => {
+  const w = await loadApp();
+  w.SLP.ui.todayStr = () => '2026-09-20';
+  const { student, as } = await assessSeedWithOrder(w, '2026-09-11');
+  await w.SLP.store.setComponentDate(as.id, 'languageSample', '2026-09-15');
+  const doc = await assessOpenStudent(w, student.id);
+  assessClick(doc.querySelector('#assess-languageSample-done'));
+  await w.SLP.ui.render();
+  const stored = await w.SLP.db.get('assessments', as.id);
+  eq(stored.components.find(c => c.key === 'languageSample').date, null, 'cleared');
+});
+
+test('typing the day it actually happened overrides the stamp', async () => {
+  const w = await loadApp();
+  w.SLP.ui.todayStr = () => '2026-09-20';
+  const { student, as } = await assessSeedWithOrder(w, '2026-09-11');
+  const doc = await assessOpenStudent(w, student.id);
+  assessSetInput(doc.querySelector('#assess-languageSample-date'), '2026-09-15');
+  await w.SLP.ui.render();
+  const stored = await w.SLP.db.get('assessments', as.id);
+  eq(stored.components.find(c => c.key === 'languageSample').date, '2026-09-15',
+     'she charts on paper and transcribes later, so the real date has to win');
+  const box = w.document.querySelector('#assess-languageSample-done');
+  eq(box.checked, true, 'and the box follows the date, because the date is the truth');
+});
+
+test('clearing the date field unticks the box', async () => {
+  const w = await loadApp();
+  w.SLP.ui.todayStr = () => '2026-09-20';
+  const { student, as } = await assessSeedWithOrder(w, '2026-09-11');
+  await w.SLP.store.setComponentDate(as.id, 'languageSample', '2026-09-15');
+  const doc = await assessOpenStudent(w, student.id);
+  assessSetInput(doc.querySelector('#assess-languageSample-date'), '');
+  await w.SLP.ui.render();
+  eq((await w.SLP.db.get('assessments', as.id))
+       .components.find(c => c.key === 'languageSample').date, null, 'cleared');
+  eq(w.document.querySelector('#assess-languageSample-done').checked, false, 'and unticked');
+});
+
+test('she can finish it with components still undated', async () => {
+  const w = await loadApp();
+  w.SLP.ui.todayStr = () => '2026-10-30';
+  const { student, as } = await assessSeedWithOrder(w, '2026-09-11');
+  await w.SLP.store.setComponentDate(as.id, 'backgroundHistory', '2026-09-15');
+  const doc = await assessOpenStudent(w, student.id);
+  assessClick(doc.querySelector('#assess-finish'));
+  await w.SLP.ui.render();
+  const stored = await w.SLP.db.get('assessments', as.id);
+  eq(stored.finishedOn, '2026-10-30', 'closed on the day she said so');
+  assert(w.document.querySelector('#assessment-order-form'), 'she can order the next');
+  const earlier = w.document.querySelector('#assessment-earlier');
+  assert(/1 of 9/.test(earlier.textContent),
+         'the gap stays visible in the history, got: ' + earlier.textContent);
+});
+
+test('ordering with no date is refused without losing what she typed elsewhere', async () => {
+  const w = await loadApp();
+  w.SLP.ui.todayStr = () => '2026-09-11';
+  await w.SLP.store.saveStudent(w.SLP.model.student({ name: 'Ada' }));
+  const [ada] = await w.SLP.db.getAll('students');
+  const doc = await assessOpenStudent(w, ada.id);
+  assessSetInput(doc.querySelector('#assess-order-date'), '');
+  assessClick(doc.querySelector('#assess-order'));
+  await w.SLP.ui.render();
+  eq(await w.SLP.store.activeAssessment(ada.id), null, 'nothing was created');
+  assert(w.document.querySelector('.toast'), 'and she was told why');
+});

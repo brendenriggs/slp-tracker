@@ -2706,25 +2706,67 @@ SLP.ui = (() => {
     return { text, cls: daysLeft <= 14 ? 'is-soon' : '' };
   }
 
-  function assessComponentRow(assessment, comp) {
+  // The checkbox is a shortcut for writing today's date; the date field is the fact. There
+  // is no stored `done` flag for them to disagree about. Both controls carry an id because
+  // every render tears #app down and doRender finds the focused element by id alone.
+  function assessComponentRow(assessment, comp, refresh) {
     const base = 'assess-' + comp.key;
+    const date = h('input', {
+      type: 'date', id: base + '-date', value: comp.date || '',
+      'on:change': async () => {
+        const v = date.value || null;
+        try {
+          await SLP.store.setComponentDate(assessment.id, comp.key, v);
+        } catch (e) {
+          toast(e.message, 'warn');
+        }
+        await refresh();
+      },
+    });
+    const box = h('input', {
+      type: 'checkbox', id: base + '-done', checked: !!comp.date,
+      'on:change': async () => {
+        await SLP.store.setComponentDate(assessment.id, comp.key,
+                                         box.checked ? SLP.ui.todayStr() : null);
+        await refresh();
+      },
+    });
     return h('div', { class: 'assess-row', 'data-key': comp.key },
-      h('input', { type: 'checkbox', id: base + '-done', checked: !!comp.date }),
-      h('label', { for: base + '-done', text: comp.label }),
-      h('input', { type: 'date', id: base + '-date', value: comp.date || '' }));
+      box, h('label', { for: base + '-done', text: comp.label }), date);
   }
 
-  function assessFinishControl(assessment) {
-    return h('button', { class: 'linkish', id: 'assess-finish', type: 'button',
-                         text: 'Mark this assessment finished' });
+  // No confirmation dialog: alert/confirm/prompt freeze browser automation and hang the
+  // test runs, and this is reversible anyway — finishing writes a date, it deletes nothing.
+  function assessFinishControl(assessment, refresh) {
+    return h('button', {
+      class: 'linkish', id: 'assess-finish', type: 'button',
+      text: 'Mark this assessment finished',
+      'on:click': async () => {
+        await SLP.store.finishAssessment(assessment.id, SLP.ui.todayStr());
+        toast('Assessment finished.', 'info');
+        await refresh();
+      },
+    });
   }
 
-  function assessOrderForm(student) {
+  function assessOrderForm(student, refresh) {
+    const date = h('input', { type: 'date', id: 'assess-order-date',
+                              value: SLP.ui.todayStr() });
     return h('div', { class: 'row-form', id: 'assessment-order-form' },
       h('label', { for: 'assess-order-date', text: 'Ordered on' }),
-      h('input', { type: 'date', id: 'assess-order-date', value: SLP.ui.todayStr() }),
-      h('button', { class: 'primary', id: 'assess-order', type: 'button',
-                    text: 'Order an assessment' }));
+      date,
+      h('button', {
+        class: 'primary', id: 'assess-order', type: 'button', text: 'Order an assessment',
+        'on:click': async () => {
+          try {
+            await SLP.store.orderAssessment(student.id, date.value);
+          } catch (e) {
+            toast(e.message, 'warn');
+            return;
+          }
+          await refresh();
+        },
+      }));
   }
 
   function assessEarlier(finished) {

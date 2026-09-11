@@ -582,11 +582,14 @@ test('a cleared date on the student page says so too', async () => {
 // the slide arrows, and the attendance figure moving from minutes to session count.
 // 1.9.0 is the ad-hoc session button on Today and the changelog behind the stamp.
 // 1.10.0 is editing a slot's time — three acts, one of which rewrites history.
+// 1.11.0 is "I missed this session" on Today. The sweep itself is as old as the
+// attendance grid; what shipped is reaching it where the miss happens, which is a new
+// thing she can do in the only sense that counts — she could not do it before.
 // Each is a new thing she can do, not a new number, and each earned its own release
 // because the changelog names one shipment per version.
 test('the version records that Attendance shipped', async () => {
   const w = await loadApp();
-  eq(w.SLP.version, '1.10.0', 'a new tab or a change to her headline number is a minor bump');
+  eq(w.SLP.version, '1.11.0', 'a new tab or a change to her headline number is a minor bump');
 });
 
 // A classList check alone cannot fail on the real defect here — .att-pct-provisional was

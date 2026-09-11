@@ -356,7 +356,7 @@
 // SLP Session Tracker — one file, no build step, no network.
 // Sections below are ordered by dependency; each only uses those above it.
 // ============================================================
-window.SLP = { version: '1.10.0' };
+window.SLP = { version: '1.11.0' };
 
 // What changed, in her words. She reads this by choice — the footer stamp opens it and
 // nothing else surfaces it — so every line has to be a sentence about her work, never a
@@ -366,6 +366,14 @@ window.SLP = { version: '1.10.0' };
 // Dates are the day the work landed, local. Versions before 1.6.0 are not listed: the app
 // did not stamp a version until then, so their contents cannot be stated honestly.
 SLP.changelog = [
+  { version: '1.11.0', date: '2026-09-11', notes: [
+      'Today can say a session was one you missed, not one the child missed. Each ' +
+        'session on the day has “I missed this session” next to Move — it marks the ' +
+        'whole group at once, and the time becomes minutes you owe those children. ' +
+        'Anyone you had already marked absent keeps that mark, because a child who ' +
+        'was not there is not time you owe.',
+      'Pressing it again undoes it, and leaves any mark you made by hand alone.',
+  ] },
   { version: '1.10.0', date: '2026-09-06', notes: [
       'A slot’s time can be edited. On the Schedule tab, Edit time on a group offers two ' +
         'things: fix a typo, which also corrects the sessions already written up at the ' +
@@ -1062,6 +1070,28 @@ SLP.store = (() => {
         written.push(row);
       }
       return written;
+    },
+
+    // Undoing the sweep above — Today's "I missed this session" pressed a second time.
+    // It is the session-level sibling of clearAttendance, and it withdraws by status
+    // rather than by roster for the same reason the sweep skipped by status: the rows
+    // she marked herself were never the sweep's to write, so they are not the sweep's
+    // to take back. Handing it the status it is undoing is what keeps those two rules
+    // the same rule stated once.
+    async clearSessionAttendance({ dateStr, slot, status }) {
+      if (!m.ATTENDANCE_STATUSES.includes(status)) {
+        throw new Error('unknown attendance status: ' + status);
+      }
+      const session = await ensureSession(dateStr, slot);
+      const cleared = [];
+      for (const row of await db.getAllBy('attendance', 'sessionId', session.id)) {
+        if (row.status !== status) continue;
+        row.status = null;
+        row.updatedAt = m.now();
+        await db.put('attendance', row);
+        cleared.push(row);
+      }
+      return cleared;
     },
 
     // A one-off booked outside the recurring schedule. It is a session with no slot,
@@ -2942,6 +2972,7 @@ SLP.ui = (() => {
                             ? null : entryKey(entry);
                           await SLP.ui.render();
                         } }),
+          SLP.ui.today.missedControl ? SLP.ui.today.missedControl(entry) : null,
           SLP.ui.today.addStudentControl
             ? await SLP.ui.today.addStudentControl(entry)
             : null),
@@ -3033,6 +3064,42 @@ SLP.ui = (() => {
 
   function wireAbsent(button, ctx) {
     button.addEventListener('click', () => toggleAbsent(ctx.entry, ctx.student, ctx.state));
+  }
+
+  // Absent says the child did not come; this says she did not. The distinction is
+  // hers and it is not cosmetic — a miss is debt she carries, an absence is not.
+  //
+  // The capability is the attendance grid's "Whole session: I missed it", unchanged
+  // and still one store call. What is new is only that it is reachable at the moment
+  // it happens, which is where she went looking for it (Carol Ann, 2026-09-11).
+  //
+  // Pressed means some student on this session reads `missed` — derived, never a
+  // second field. "Some", not "every", because the sweep never claimed every row:
+  // it skips the ones she marked herself. Requiring all of them would make the undo
+  // unreachable on exactly the sessions where the sweep skipped someone, which is
+  // the common case. Pressed is the mirror of what clearSessionAttendance will
+  // withdraw — both read the status, so they cannot disagree about what is in effect.
+  function sessionMissed(entry) {
+    return entry.students.some(s => SLP.derive.studentState(entry, s.id) === 'missed');
+  }
+
+  async function toggleMissedNow(entry, pressed) {
+    const args = { dateStr: SLP.ui.route.date, slot: slotOf(entry), status: 'missed' };
+    if (pressed) await SLP.store.clearSessionAttendance(args);
+    else await SLP.store.setSessionAttendance(args);
+    await SLP.ui.render();
+  }
+
+  function missedControl(entry) {
+    const pressed = sessionMissed(entry);
+    const button = h('button', {
+      class: 'linkish slot-missed', type: 'button',
+      text: pressed ? 'I was here after all' : 'I missed this session',
+      title: 'The miss was mine, not the child’s — it becomes time you owe them',
+      'aria-pressed': String(pressed),
+    });
+    button.addEventListener('click', () => enqueue(() => toggleMissedNow(entry, pressed)));
+    return button;
   }
 
   async function addStudentControl(entry) {
@@ -3131,7 +3198,7 @@ SLP.ui = (() => {
   });
 
   SLP.ui.today = { shiftDate, flush, wireValueInput, wireNote, wireAbsent,
-                   addStudentControl, removeButton };
+                   addStudentControl, removeButton, missedControl };
 })();
 
 // ============================================================

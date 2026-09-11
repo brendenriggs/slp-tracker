@@ -9,8 +9,8 @@ here.
 
 **Six questions were answered on 2026-09-06** and are folded into
 `docs/adr/0004-service-requirements-and-attempt-based-debt.md`, `CONTEXT.md` and
-`docs/BACKLOG.md`. The two below are what is left, plus one raised and unanswered in the
-same conversation.
+`docs/BACKLOG.md`. **A seventh was answered on 2026-09-11** — where she goes to mark a
+session she missed — and shipped in 1.11.0. The two below are what is left.
 
 ---
 
@@ -50,18 +50,3 @@ behaviour that falls out of building the rest and was accepted as a starting poi
 decision — it is the smaller commitment, because adding an expiry later closes debts, while
 removing one would have to resurrect them.
 
----
-
-## 3. Where does she look to mark a session she missed?
-
-> It already exists — tap a cell in the attendance grid and below the divider there is
-> "Whole session: I missed it", which sweeps every student on the roster. Where did you go
-> looking for it?
-
-**Why it matters:** she reported having no clear way to mark a session she missed, and the
-feature has been there the whole time. That is a discoverability defect, not a missing
-capability, and the fix depends on where she expected it. The standing guess — worth
-confirming rather than assuming — is that she wanted it on **Today**, at the moment it
-happens, rather than in the attendance grid afterwards.
-
-**Assumed meanwhile:** nothing built. See the entry in `docs/BACKLOG.md`.

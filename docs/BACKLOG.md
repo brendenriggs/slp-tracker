@@ -99,16 +99,24 @@ two. That is question 1 in `docs/OPEN-QUESTIONS.md` and this cannot ship without
 
 ## "I missed it" exists and she could not find it
 
-**Raised:** 2026-09-06 by Carol Ann · **Status:** ready to design
+**Raised:** 2026-09-06 by Carol Ann · **Status:** done, 2026-09-11 (1.11.0)
 
-She reported no clear way to mark a session she missed. It has been there the whole time:
-the attendance grid's cell popover offers **"Whole session: I missed it"** below the divider
-(`index.html:3095-3097`), sweeping the roster without overwriting marks she made by hand.
+She reported no clear way to mark a session she missed. It had been there the whole time:
+the attendance grid's cell popover offers **"Whole session: I missed it"** below the
+divider, sweeping the roster without overwriting marks she made by hand.
 
-So this is discoverability, not a missing capability. The likely fix is surfacing it on
-**Today**, where the miss actually happens, rather than in the attendance grid afterwards —
-but where she went looking is question 3 in `docs/OPEN-QUESTIONS.md` and should be confirmed
-before building to the guess.
+So this was discoverability, not a missing capability. She confirmed where she went looking
+on 2026-09-11 — **Today**, at the moment it happens — which is what she asked for again in
+her own words: an easy way to say the miss was hers rather than the child's.
+
+What shipped is the doorway, not a new capability. Each session on Today carries
+**"I missed this session"** beside *Move…*, calling the same `setSessionAttendance` the grid
+popover calls. Its undo needed one new store function, `clearSessionAttendance`, which
+withdraws by status rather than by roster — the rows she marked herself were never the
+sweep's to write, so they are not the sweep's to take back.
+
+The accounting was already correct and did not change: a missed session accrues makeup debt
+and stays out of the child's attendance percentage.
 
 ---
 

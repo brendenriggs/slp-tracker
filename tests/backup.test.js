@@ -262,3 +262,52 @@ test('the status line carries the fine-grained time, not the day count', async (
   const status = await w.SLP.backup.status();
   eq(status.since, '12 minutes ago', 'status reports it so the bar can show it');
 });
+
+// A version 1 file, exactly as her existing backup is shaped: every store the app had
+// before assessments existed, and nothing else.
+function assessV1File() {
+  return JSON.stringify({
+    schemaVersion: 1,
+    appVersion: '1.11.0',
+    exportedAt: '2026-09-01T12:00:00.000Z',
+    data: {
+      students: [{ id: 's1', name: 'Ada', grade: '3', school: '', background: '',
+                   active: true }],
+      goals: [], objectives: [], slots: [], sessions: [],
+      attendance: [], notes: [], datapoints: [],
+    },
+  });
+}
+
+test('her existing version 1 backup still restores after assessments arrive', async () => {
+  const w = await loadApp();
+  const { counts } = w.SLP.backup.parseBackup(assessV1File());
+  eq(counts.students, 1, 'the file reads');
+  await w.SLP.backup.restoreFromText(assessV1File());
+  const students = await w.SLP.db.getAll('students');
+  eq(students.map(s => s.name), ['Ada'], 'her caseload came back');
+  eq((await w.SLP.db.getAll('assessments')).length, 0,
+     'a file written before assessments existed restores none, which is true of it');
+});
+
+test('a version 2 file missing a section is still rejected by name', async () => {
+  const w = await loadApp();
+  const broken = JSON.parse(assessV1File());
+  broken.schemaVersion = 2;                       // claims to be new, but has no assessments
+  const e = await throws(() => w.SLP.backup.parseBackup(JSON.stringify(broken)),
+                         'a truncated version 2 file must be refused');
+  assert(/assessments/.test(e.message),
+         'the message must name the missing store, got: ' + e.message);
+});
+
+test('a version 2 file missing an older section is still rejected by name', async () => {
+  const w = await loadApp();
+  const broken = JSON.parse(assessV1File());
+  broken.schemaVersion = 2;
+  broken.data.assessments = [];
+  delete broken.data.datapoints;                  // the guard must keep its teeth everywhere
+  const e = await throws(() => w.SLP.backup.parseBackup(JSON.stringify(broken)),
+                         'a truncated version 2 file must be refused');
+  assert(/datapoints/.test(e.message),
+         'the message must name the missing store, got: ' + e.message);
+});

@@ -210,3 +210,44 @@ test('a school she has never used before is kept exactly as typed', async () => 
      'Jefferson High', 'new schools are trimmed but not otherwise touched');
   eq(w.SLP.derive.canonicalSchool([], ''), '', 'no school stays no school');
 });
+
+function assessRecord(w, orderedOn, doneKeys = []) {
+  const as = w.SLP.model.assessment({ studentId: 's1', orderedOn });
+  for (const k of doneKeys) as.components.find(c => c.key === k).date = orderedOn;
+  return as;
+}
+
+test('an assessment is due 60 calendar days after it was ordered', async () => {
+  const w = await loadApp();
+  const due = w.SLP.derive.assessmentDue(assessRecord(w, '2026-09-11'), '2026-09-11');
+  eq(due.dueOn, '2026-11-10', 'ordered 11 Sep 2026 is due 10 Nov 2026');
+  eq(due.daysLeft, 60, 'the whole 60 are still ahead of her on the day she orders it');
+  eq(due.overdue, false, 'not overdue on day one');
+});
+
+test('the 60 days cross a year end and a leap day correctly', async () => {
+  const w = await loadApp();
+  eq(w.SLP.derive.assessmentDue(assessRecord(w, '2026-11-15'), '2026-11-15').dueOn,
+     '2027-01-14', 'November 15 runs into the next year');
+  eq(w.SLP.derive.assessmentDue(assessRecord(w, '2028-01-15'), '2028-01-15').dueOn,
+     '2028-03-15', 'a leap February is 29 days long');
+});
+
+test('daysLeft counts down and goes negative the day after it was due', async () => {
+  const w = await loadApp();
+  const as = assessRecord(w, '2026-09-11');          // due 2026-11-10
+  eq(w.SLP.derive.assessmentDue(as, '2026-11-09').daysLeft, 1, 'the day before');
+  eq(w.SLP.derive.assessmentDue(as, '2026-11-10').daysLeft, 0, 'the day itself');
+  eq(w.SLP.derive.assessmentDue(as, '2026-11-10').overdue, false,
+     'the due date is a day she still has, not a day she has missed');
+  eq(w.SLP.derive.assessmentDue(as, '2026-11-11').daysLeft, -1, 'the day after');
+  eq(w.SLP.derive.assessmentDue(as, '2026-11-11').overdue, true, 'now it is late');
+});
+
+test('the component count is derived from the dates, not from a flag', async () => {
+  const w = await loadApp();
+  const as = assessRecord(w, '2026-09-11', ['backgroundHistory', 'languageSample']);
+  const due = w.SLP.derive.assessmentDue(as, '2026-09-20');
+  eq(due.done, 2, 'two carry a date');
+  eq(due.of, 9, 'out of her nine');
+});

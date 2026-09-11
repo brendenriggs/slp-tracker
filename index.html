@@ -13,6 +13,10 @@
        for a non-text graphic. --line is a border colour (1.4:1) and vanishes when a
        glyph is drawn in it — which is what happened to the attendance grid's dots. */
     --faint: #8f8f8f;
+    /* --warn (#b7791f) is 3.64:1 on white. That is fine for a filled mark and wrong for
+       every word in this app, whose body font is 15px and so gets no large-text exemption.
+       This is the same amber at ink weight, 5.9:1, for anything written rather than drawn. */
+    --warn-ink: #8a5a00;
     /* The crosshair tint. Light enough that a whole row and column of it does not
        compete with the marks sitting on top of it. */
     --hot: #eaf1fa;
@@ -93,6 +97,17 @@
   .panel h2 { font-size: 14px; margin: 0 0 10px; text-transform: uppercase;
               letter-spacing: .04em; color: var(--muted); }
   .row-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  /* The standing is said in words on the line itself; these only reinforce it, so the
+     sentence survives greyscale, a screenshot, and eyes that do not separate amber from red. */
+  .assess-standing.is-soon { color: var(--warn-ink); font-weight: 600; }
+  .assess-standing.is-over { color: var(--danger); font-weight: 600; }
+  /* The label does NOT stretch. Stretching it pushes the date input to the far edge of a
+     wide panel, and nine rows of "carry this name across 475px and trust you landed on the
+     right one" is a matching exercise she should not have to do. A fixed column keeps the
+     hop short at any width; the row simply does not use the rest of the panel. */
+  .assess-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
+  .assess-row label { flex: 0 1 190px; }
+  .assess-count { color: var(--muted); max-width: 400px; text-align: right; }
   .student-row { display: flex; gap: 10px; align-items: center; padding: 5px 0;
                  border-bottom: 1px solid var(--line); }
   .student-row:last-child { border-bottom: none; }
@@ -356,7 +371,7 @@
 // SLP Session Tracker — one file, no build step, no network.
 // Sections below are ordered by dependency; each only uses those above it.
 // ============================================================
-window.SLP = { version: '1.11.0' };
+window.SLP = { version: '1.12.0' };
 
 // What changed, in her words. She reads this by choice — the footer stamp opens it and
 // nothing else surfaces it — so every line has to be a sentence about her work, never a
@@ -366,6 +381,22 @@ window.SLP = { version: '1.11.0' };
 // Dates are the day the work landed, local. Versions before 1.6.0 are not listed: the app
 // did not stamp a version until then, so their contents cannot be stated honestly.
 SLP.changelog = [
+  { version: '1.12.0', date: '2026-09-11', notes: [
+      'A student’s page can now track an assessment. Put in the date it was ordered and ' +
+        'the page works out the date it has to be finished, 60 calendar days later, and ' +
+        'says how long you have left — or how far over you are.',
+      'Each of the nine parts — background history, classroom observation, language ' +
+        'sample, narrative sample, formal assessment, teacher interview, assessment ' +
+        'written, uploaded and billed — keeps the date you did it, not just a tick, ' +
+        'because those are the dates you have to report.',
+      'Tick a part to fill in today, or type the day it actually happened if you are ' +
+        'catching up later. The tick and the date are the same fact, so changing one ' +
+        'changes the other.',
+      'You decide when an assessment is finished, even if a part never applied. What was ' +
+        'left blank stays visible afterwards rather than being tidied away.',
+      'A student can have more than one assessment over the years. The one you are ' +
+        'working on is the one you see; the finished ones fold away underneath it.',
+  ] },
   { version: '1.11.0', date: '2026-09-11', notes: [
       'Today can say a session was one you missed, not one the child missed. Each ' +
         'session on the day has “I missed this session” next to Move — it marks the ' +
@@ -415,7 +446,7 @@ SLP.changelog = [
 // ============================================================
 SLP.db = (() => {
   const DB_NAME = 'slp-tracker';
-  const DB_VERSION = 1;
+  const DB_VERSION = 2;
 
   // store name -> index definitions
   const SCHEMA = {
@@ -427,6 +458,7 @@ SLP.db = (() => {
     attendance: ['sessionId', 'studentId'],
     notes:      ['sessionId', 'studentId'],
     datapoints: ['sessionId', 'studentId', 'objectiveId'],
+    assessments:['studentId'],
     meta:       [],
   };
   const STORES = Object.keys(SCHEMA);
@@ -556,6 +588,29 @@ SLP.model = (() => {
     field({ label: 'Notes', type: 'text' }),
   ];
 
+  // Her nine, in her order and her words, from the text thread of 2026-09-11. The list is
+  // copied onto each assessment rather than read at render time: whether it is fixed is
+  // still her question (docs/OPEN-QUESTIONS.md), and an assessment she has already reported
+  // to Medicaid must keep rendering as she reported it, whatever the list becomes later.
+  const ASSESSMENT_COMPONENTS = Object.freeze([
+    ['backgroundHistory',    'Background history'],
+    ['classroomObservation', 'Classroom observation'],
+    ['languageSample',       'Language sample'],
+    ['narrativeSample',      'Narrative sample'],
+    ['formalAssessment',     'Formal assessment'],
+    ['teacherInterview',     'Teacher interview'],
+    ['assessmentWritten',    'Assessment written'],
+    ['assessmentUploaded',   'Assessment uploaded'],
+    ['assessmentBilled',     'Assessment billed'],
+  ]);
+
+  const presetAssessmentComponents = () =>
+    ASSESSMENT_COMPONENTS.map(([key, label]) => ({ key, label, date: null }));
+
+  // §derive has its own copy of this test. Model is loaded first and stays dependency-free,
+  // so it keeps its own rather than reaching forward for one.
+  const isDateStr = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s));
+
   function seedValues(objective) {
     const values = {};
     for (const f of objective.fields) {
@@ -636,7 +691,7 @@ SLP.model = (() => {
 
   return {
     uid, now, field, presetTrials, seedValues, setValue, hasEnteredData, ratio, displayText,
-    GRADES, gradeLabel, ATTENDANCE_STATUSES,
+    GRADES, gradeLabel, ATTENDANCE_STATUSES, presetAssessmentComponents,
 
     student: ({ name, grade = '', school = '', background = '' }) => ({
       id: uid('s'), name, grade, school, background,
@@ -668,6 +723,17 @@ SLP.model = (() => {
       id: uid('dp'), sessionId, studentId, objectiveId: objective.id,
       values: seedValues(objective), updatedAt: now(),
     }),
+    // The whole feature hangs off this one date, so it is guarded here rather than in the
+    // form: a record with no order date has no due date, and nothing downstream could tell
+    // you why.
+    assessment: ({ studentId, orderedOn, components = presetAssessmentComponents() }) => {
+      if (!isDateStr(orderedOn)) {
+        throw new Error('an assessment needs the date it was ordered, as YYYY-MM-DD: ' +
+                        (orderedOn === '' || orderedOn == null ? '(blank)' : orderedOn));
+      }
+      return { id: uid('as'), studentId, orderedOn, components,
+               finishedOn: null, createdAt: now(), updatedAt: now() };
+    },
   };
 })();
 
@@ -770,6 +836,30 @@ SLP.store = (() => {
     }
     if (existing) await db.del('attendance', existing.id);
     return null;
+  }
+
+  // --- assessments ---------------------------------------------------------
+  // One open assessment per student, and she is the one who closes it. Ordering a second
+  // is refused rather than silently closing the open one: two assessments running for the
+  // same child is not a state she has ever described, and a refusal she can read beats a
+  // record that changed underneath her.
+
+  const isAssessDateStr = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s));
+
+  async function assessmentsForStudent(studentId) {
+    const all = await db.getAllBy('assessments', 'studentId', studentId);
+    return all.sort((a, b) => b.orderedOn.localeCompare(a.orderedOn));
+  }
+
+  async function activeAssessment(studentId) {
+    const all = await assessmentsForStudent(studentId);
+    return all.find(a => a.finishedOn === null) || null;
+  }
+
+  async function loadAssessment(assessmentId) {
+    const as = await db.get('assessments', assessmentId);
+    if (!as) throw new Error('unknown assessment: ' + assessmentId);
+    return as;
   }
 
   return {
@@ -1217,6 +1307,51 @@ SLP.store = (() => {
       }
       return rows.sort((a, b) => a.date.localeCompare(b.date));
     },
+
+    // --- assessments ---
+    assessmentsForStudent,
+    activeAssessment,
+
+    async orderAssessment(studentId, orderedOn) {
+      const open = await activeAssessment(studentId);
+      if (open) {
+        throw new Error('that student already has an assessment in progress, ordered ' +
+                        open.orderedOn + ' — finish it before ordering another');
+      }
+      const as = m.assessment({ studentId, orderedOn });
+      await db.put('assessments', as);
+      return as;
+    },
+
+    // The date IS the done state. There is deliberately no companion flag: a second field
+    // would be a second source of truth for one fact, which is the bug the datapoint
+    // `entered` flag exists to prevent, not an instance of it. A component date has no
+    // pre-filled default, so its presence is never ambiguous.
+    async setComponentDate(assessmentId, key, date) {
+      const as = await loadAssessment(assessmentId);
+      const comp = as.components.find(c => c.key === key);
+      if (!comp) throw new Error('unknown assessment component: ' + key);
+      if (date !== null && !isAssessDateStr(date)) {
+        throw new Error('a component date must be YYYY-MM-DD or empty: ' + date);
+      }
+      comp.date = date;
+      as.updatedAt = m.now();
+      await db.put('assessments', as);
+      return as;
+    },
+
+    // Closing with gaps is legal and stays visible: a component that does not apply to a
+    // child would otherwise hold the record open forever with nothing she could press.
+    async finishAssessment(assessmentId, finishedOn) {
+      const as = await loadAssessment(assessmentId);
+      if (!isAssessDateStr(finishedOn)) {
+        throw new Error('finishing an assessment needs a date, as YYYY-MM-DD: ' + finishedOn);
+      }
+      as.finishedOn = finishedOn;
+      as.updatedAt = m.now();
+      await db.put('assessments', as);
+      return as;
+    },
   };
 })();
 
@@ -1369,6 +1504,38 @@ SLP.derive = (() => {
   function addDays(dateStr, n) {
     const [y, mo, d] = dateStr.split('-').map(Number);
     return stamp(new Date(y, mo - 1, d + n));
+  }
+
+  // 60 calendar days, from the day the assessment was ordered — which is the day of the
+  // IEP meeting, settled 2026-09-11. The number lives here and nowhere else, so if she ever
+  // says it varies by district it becomes a field on the record with one call site to change.
+  const ASSESSMENT_DAYS = 60;
+
+  // Whole days between two local dates, without touching a clock. Subtracting timestamps
+  // gets this wrong across a daylight-saving boundary, where a "day" is 23 or 25 hours;
+  // both ends are read as UTC midnight instead, so a day is always a day.
+  function dayNumber(dateStr) {
+    const [y, mo, d] = dateStr.split('-').map(Number);
+    return Math.round(Date.UTC(y, mo - 1, d) / 86400000);
+  }
+
+  // `today` is required rather than defaulted. A default would read the real clock from
+  // inside derive, which is exactly what makes a date function untestable — the suite pins
+  // SLP.ui.todayStr instead and passes the result in.
+  function assessmentDue(assessment, today) {
+    if (!assessment) throw new Error('assessmentDue needs an assessment');
+    if (!today) throw new Error('assessmentDue needs today\'s date, as YYYY-MM-DD');
+    const dueOn = addDays(assessment.orderedOn, ASSESSMENT_DAYS);
+    const daysLeft = dayNumber(dueOn) - dayNumber(today);
+    const comps = assessment.components || [];
+    return {
+      dueOn,
+      daysLeft,
+      // The due date itself is a day she still has. Only the day after is late.
+      overdue: daysLeft < 0,
+      done: comps.filter(c => !!c.date).length,
+      of: comps.length,
+    };
   }
 
   // The day clamps: there is no February 31st, so Mar 31 back one month is Feb 28.
@@ -1603,7 +1770,7 @@ SLP.derive = (() => {
 
   return { studentState, chartedCount, objectivesCharted, series, mastery, pair, minutesOf,
            makeupBalance, attendancePct, attendanceGrid, schools, canonicalSchool, monthRange,
-           makeupDuration, shiftRangeWeeks, shiftRangeMonths };
+           makeupDuration, shiftRangeWeeks, shiftRangeMonths, assessmentDue };
 })();
 
 // ============================================================
@@ -1613,7 +1780,16 @@ SLP.derive = (() => {
 // ============================================================
 SLP.backup = (() => {
   const db = SLP.db, m = SLP.model;
-  const SCHEMA_VERSION = 1;
+  const SCHEMA_VERSION = 2;
+
+  // Which schema version each store arrived in. A backup file is checked against the stores
+  // that existed at the version the file itself declares, so a file she wrote before a store
+  // existed restores cleanly — while a file claiming the current version is still required to
+  // carry everything. Softening the check instead would turn "your file is damaged" into
+  // "restored, minus whatever was missing", which is the one thing this section exists to
+  // prevent. Every store not listed here has been there since version 1.
+  const STORE_SINCE = { assessments: 2 };
+  const storeSince = name => STORE_SINCE[name] || 1;
 
   const pad = n => String(n).padStart(2, '0');
   function today() {
@@ -1723,6 +1899,7 @@ SLP.backup = (() => {
     }
     for (const store of db.STORES) {
       if (store === 'meta') continue;
+      if (storeSince(store) > parsed.schemaVersion) continue;   // not yet invented when this was written
       if (!Array.isArray(parsed.data[store])) {
         throw new Error('That backup is incomplete — the "' + store +
                         '" section is missing. Nothing was changed.');
@@ -1731,7 +1908,7 @@ SLP.backup = (() => {
     const counts = {};
     for (const store of db.STORES) {
       if (store === 'meta') continue;
-      counts[store] = parsed.data[store].length;
+      counts[store] = (parsed.data[store] || []).length;
     }
     return { parsed, counts, exportedAt: parsed.exportedAt || null };
   }
@@ -1742,7 +1919,7 @@ SLP.backup = (() => {
     const restored = {};
     for (const store of db.STORES) {
       if (store === 'meta') continue;
-      const rows = parsed.data[store];
+      const rows = parsed.data[store] || [];
       if (rows.length) await db.bulkPut(store, rows);
       restored[store] = rows.length;
     }
@@ -2527,6 +2704,135 @@ SLP.ui = (() => {
         })));
   }
 
+  // "11 Sep 2026" — the form she reads a deadline in. An ISO string is what we store and
+  // the wrong thing to put in front of her.
+  const ASSESS_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                         'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function assessHuman(dateStr) {
+    const [y, mo, d] = dateStr.split('-').map(Number);
+    return d + ' ' + ASSESS_MONTHS[mo - 1] + ' ' + y;
+  }
+
+  // How it stands, in words. Colour reinforces this line; it never carries it alone —
+  // the sentence has to survive greyscale, a screenshot, and eyes that do not separate
+  // amber from red.
+  function assessStanding(daysLeft) {
+    if (daysLeft < 0) {
+      const n = -daysLeft;
+      return { text: n + (n === 1 ? ' day over' : ' days over'), cls: 'is-over' };
+    }
+    if (daysLeft === 0) return { text: 'due today', cls: 'is-over' };
+    const text = daysLeft + (daysLeft === 1 ? ' day' : ' days');
+    return { text, cls: daysLeft <= 14 ? 'is-soon' : '' };
+  }
+
+  // The checkbox is a shortcut for writing today's date; the date field is the fact. There
+  // is no stored `done` flag for them to disagree about. Both controls carry an id because
+  // every render tears #app down and doRender finds the focused element by id alone.
+  function assessComponentRow(assessment, comp, refresh) {
+    const base = 'assess-' + comp.key;
+    const date = h('input', {
+      type: 'date', id: base + '-date', value: comp.date || '',
+      'on:change': async () => {
+        const v = date.value || null;
+        try {
+          await SLP.store.setComponentDate(assessment.id, comp.key, v);
+        } catch (e) {
+          toast(e.message, 'warn');
+        }
+        await refresh();
+      },
+    });
+    const box = h('input', {
+      type: 'checkbox', id: base + '-done', checked: !!comp.date,
+      'on:change': async () => {
+        await SLP.store.setComponentDate(assessment.id, comp.key,
+                                         box.checked ? SLP.ui.todayStr() : null);
+        await refresh();
+      },
+    });
+    return h('div', { class: 'assess-row', 'data-key': comp.key },
+      box, h('label', { for: base + '-done', text: comp.label }), date);
+  }
+
+  // No confirmation dialog: alert/confirm/prompt freeze browser automation and hang the
+  // test runs, and this is reversible anyway — finishing writes a date, it deletes nothing.
+  function assessFinishControl(assessment, refresh) {
+    return h('button', {
+      class: 'linkish', id: 'assess-finish', type: 'button',
+      text: 'Mark this assessment finished',
+      'on:click': async () => {
+        await SLP.store.finishAssessment(assessment.id, SLP.ui.todayStr());
+        toast('Assessment finished.', 'info');
+        await refresh();
+      },
+    });
+  }
+
+  function assessOrderForm(student, refresh) {
+    const date = h('input', { type: 'date', id: 'assess-order-date',
+                              value: SLP.ui.todayStr() });
+    return h('div', { class: 'row-form', id: 'assessment-order-form' },
+      h('label', { for: 'assess-order-date', text: 'Ordered on' }),
+      date,
+      h('button', {
+        class: 'primary', id: 'assess-order', type: 'button', text: 'Order an assessment',
+        'on:click': async () => {
+          try {
+            await SLP.store.orderAssessment(student.id, date.value);
+          } catch (e) {
+            toast(e.message, 'warn');
+            return;
+          }
+          await refresh();
+        },
+      }));
+  }
+
+  function assessEarlier(finished) {
+    const label = finished.length === 1
+      ? '1 earlier assessment' : finished.length + ' earlier assessments';
+    return h('details', { id: 'assessment-earlier' },
+      h('summary', { text: label }),
+      ...finished.map(a => h('p', {
+        text: 'Ordered ' + assessHuman(a.orderedOn) + ' · finished ' +
+              assessHuman(a.finishedOn) + ' · ' +
+              a.components.filter(c => c.date).length + ' of ' + a.components.length,
+      })));
+  }
+
+  async function renderAssessment(container, student) {
+    const refresh = () => SLP.ui.render();
+    const today = SLP.ui.todayStr();
+    const active = await SLP.store.activeAssessment(student.id);
+    const all = await SLP.store.assessmentsForStudent(student.id);
+    const finished = all.filter(a => a.finishedOn !== null);
+
+    const panel = h('section', { class: 'panel', id: 'assessment-block' },
+      h('h2', { text: 'Assessment' }));
+
+    if (active) {
+      const due = SLP.derive.assessmentDue(active, today);
+      const standing = assessStanding(due.daysLeft);
+      panel.appendChild(h('p', { id: 'assessment-due' },
+        h('span', { text: 'Ordered ' + assessHuman(active.orderedOn) + ' · due ' +
+                          assessHuman(due.dueOn) + ' · ' }),
+        h('span', { class: 'assess-standing ' + standing.cls, text: standing.text })));
+
+      for (const comp of active.components) {
+        panel.appendChild(assessComponentRow(active, comp, refresh));
+      }
+      panel.appendChild(h('p', { class: 'assess-count', id: 'assess-count',
+                                 text: due.done + ' of ' + due.of }));
+      panel.appendChild(assessFinishControl(active, refresh));
+    } else {
+      panel.appendChild(assessOrderForm(student, refresh));
+    }
+
+    if (finished.length) panel.appendChild(assessEarlier(finished));
+    container.appendChild(panel);
+  }
+
   async function renderDetail(container, student, schools) {
     const refresh = () => SLP.ui.render();
     const detail = h('div', { id: 'student-detail' },
@@ -2559,6 +2865,11 @@ SLP.ui = (() => {
           await refresh();
         },
       })));
+
+    // First of the appended blocks, because it is the only one carrying a deadline. It is
+    // called unguarded, unlike its two neighbours: renderAssessment lives in this section,
+    // so a guard here would only hide a typo.
+    await renderAssessment(detail, student);
 
     // ui.aggregation and ui.attendance append their sections here. Both are defined
     // in later sections of this file, so both are guarded — the detail page renders

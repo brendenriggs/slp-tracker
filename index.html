@@ -101,9 +101,13 @@
      sentence survives greyscale, a screenshot, and eyes that do not separate amber from red. */
   .assess-standing.is-soon { color: var(--warn-ink); font-weight: 600; }
   .assess-standing.is-over { color: var(--danger); font-weight: 600; }
+  /* The label does NOT stretch. Stretching it pushes the date input to the far edge of a
+     wide panel, and nine rows of "carry this name across 475px and trust you landed on the
+     right one" is a matching exercise she should not have to do. A fixed column keeps the
+     hop short at any width; the row simply does not use the rest of the panel. */
   .assess-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
-  .assess-row label { flex: 1; }
-  .assess-count { color: var(--muted); text-align: right; }
+  .assess-row label { flex: 0 1 190px; }
+  .assess-count { color: var(--muted); max-width: 400px; text-align: right; }
   .student-row { display: flex; gap: 10px; align-items: center; padding: 5px 0;
                  border-bottom: 1px solid var(--line); }
   .student-row:last-child { border-bottom: none; }

@@ -59,6 +59,28 @@ test('all nine components are listed, in her order, each with a date field', asy
   }
 });
 
+test('a component date sits beside its label, not across the panel from it', async () => {
+  const w = await loadApp();
+  w.SLP.ui.todayStr = () => '2026-09-11';
+  const { student } = await assessSeedWithOrder(w, '2026-09-11');
+  const doc = await assessOpenStudent(w, student.id);
+  for (const r of doc.querySelectorAll('.assess-row')) {
+    // The label BOX is not the question. A stretched label sits flush against the date
+    // while its text ends half a panel away, so the box measures zero gap and proves
+    // nothing. A range over the text reports where the words actually stop.
+    const range = doc.createRange();
+    range.selectNodeContents(r.querySelector('label'));
+    const text = range.getBoundingClientRect();
+    const date = r.querySelector('input[type="date"]').getBoundingClientRect();
+    const gap = date.left - text.right;
+    // Nine rows of label-then-date across a wide panel is a matching exercise: she has to
+    // carry "Narrative sample" across the gap and trust she landed on the right row. The
+    // eye does that reliably over a short hop and not over half a screen.
+    assert(gap >= 0 && gap < 80,
+           'the date must sit beside ' + r.dataset.key + ', gap was ' + Math.round(gap) + 'px');
+  }
+});
+
 test('the count reads from the dates', async () => {
   const w = await loadApp();
   w.SLP.ui.todayStr = () => '2026-09-20';

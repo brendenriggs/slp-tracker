@@ -807,6 +807,30 @@ SLP.store = (() => {
     return null;
   }
 
+  // --- assessments ---------------------------------------------------------
+  // One open assessment per student, and she is the one who closes it. Ordering a second
+  // is refused rather than silently closing the open one: two assessments running for the
+  // same child is not a state she has ever described, and a refusal she can read beats a
+  // record that changed underneath her.
+
+  const isAssessDateStr = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s));
+
+  async function assessmentsForStudent(studentId) {
+    const all = await db.getAllBy('assessments', 'studentId', studentId);
+    return all.sort((a, b) => b.orderedOn.localeCompare(a.orderedOn));
+  }
+
+  async function activeAssessment(studentId) {
+    const all = await assessmentsForStudent(studentId);
+    return all.find(a => a.finishedOn === null) || null;
+  }
+
+  async function loadAssessment(assessmentId) {
+    const as = await db.get('assessments', assessmentId);
+    if (!as) throw new Error('unknown assessment: ' + assessmentId);
+    return as;
+  }
+
   return {
     // --- caseload ---
     async listStudents({ activeOnly = false } = {}) {
@@ -1251,6 +1275,51 @@ SLP.store = (() => {
         if (session) rows.push({ date: session.date, dp });
       }
       return rows.sort((a, b) => a.date.localeCompare(b.date));
+    },
+
+    // --- assessments ---
+    assessmentsForStudent,
+    activeAssessment,
+
+    async orderAssessment(studentId, orderedOn) {
+      const open = await activeAssessment(studentId);
+      if (open) {
+        throw new Error('that student already has an assessment in progress, ordered ' +
+                        open.orderedOn + ' — finish it before ordering another');
+      }
+      const as = m.assessment({ studentId, orderedOn });
+      await db.put('assessments', as);
+      return as;
+    },
+
+    // The date IS the done state. There is deliberately no companion flag: a second field
+    // would be a second source of truth for one fact, which is the bug the datapoint
+    // `entered` flag exists to prevent, not an instance of it. A component date has no
+    // pre-filled default, so its presence is never ambiguous.
+    async setComponentDate(assessmentId, key, date) {
+      const as = await loadAssessment(assessmentId);
+      const comp = as.components.find(c => c.key === key);
+      if (!comp) throw new Error('unknown assessment component: ' + key);
+      if (date !== null && !isAssessDateStr(date)) {
+        throw new Error('a component date must be YYYY-MM-DD or empty: ' + date);
+      }
+      comp.date = date;
+      as.updatedAt = m.now();
+      await db.put('assessments', as);
+      return as;
+    },
+
+    // Closing with gaps is legal and stays visible: a component that does not apply to a
+    // child would otherwise hold the record open forever with nothing she could press.
+    async finishAssessment(assessmentId, finishedOn) {
+      const as = await loadAssessment(assessmentId);
+      if (!isAssessDateStr(finishedOn)) {
+        throw new Error('finishing an assessment needs a date, as YYYY-MM-DD: ' + finishedOn);
+      }
+      as.finishedOn = finishedOn;
+      as.updatedAt = m.now();
+      await db.put('assessments', as);
+      return as;
     },
   };
 })();

@@ -12,10 +12,16 @@ here.
 `docs/BACKLOG.md`. **A seventh was answered on 2026-09-11** — where she goes to mark a
 session she missed — and shipped in 1.11.0.
 
-Questions 1 and 2 are left over from the requirement model. Questions 3 to 6 are new on
-2026-09-11 and all belong to **assessment timelines**, which she asked for that day. Question
-3 is the one that decides the shape of the feature; 4 to 6 decide how much of it has to be
-editable. None of them has been put to her yet.
+Questions 1 and 2 are left over from the requirement model. Questions 3 and 4 are new on
+2026-09-11 and both belong to **assessment timelines**, which she asked for that day. Neither
+has been put to her yet, and neither blocks the build — the design accommodates either answer
+and records what was assumed meanwhile.
+
+**Two more assessment questions were raised and closed the same day**, both by Brenden, and
+are folded into `docs/superpowers/specs/2026-09-11-assessment-timelines-design.md`. Which date
+starts the clock: the order always happens at the IEP meeting, so it is one date and one due
+date. And whether a student can hold several assessments over time: many, with exactly one
+active, and she closes one herself rather than the ninth component closing it.
 
 ---
 
@@ -57,28 +63,7 @@ removing one would have to resurrect them.
 
 ---
 
-## 3. Does the 60-day clock start when the assessment was ordered, or at the IEP meeting?
-
-> When you asked for this you said "I put in the date of the IEP meeting and it calculates
-> when I need to have the assessment done", and then later "the date we ordered the
-> assessment". Are those the same date for you, or two different ones — and if they are two,
-> which one is the 60 days counted from?
-
-**Why it matters:** they are different clocks, so they give different due dates. It also
-decides whether the record stores one date or two. If the IEP meeting is a second deadline
-rather than another name for the same one, the feature has to show two.
-
-**Status:** raised 2026-09-11 from her own two descriptions of it. Put to Brenden the same
-day; he had no preference, which makes it a question about how her practice runs rather than
-a product decision. `docs/AUTONOMY.md` says that is hers.
-
-**Assumed meanwhile:** the clock runs from **the date the assessment was ordered, 60 calendar
-days** — she said that twice and confirmed it directly. The IEP meeting date is left out of
-the build entirely rather than guessed at, so nothing has to be unwound when she answers.
-
----
-
-## 4. Is it always 60 days?
+## 3. Is it always 60 days?
 
 > Is 60 calendar days the rule everywhere you work, or does it change by district, by state,
 > or by what kind of assessment it is?
@@ -87,13 +72,16 @@ the build entirely rather than guessed at, so nothing has to be unwound when she
 assessment. Building it as a constant and discovering later that it varies means touching
 every stored record.
 
-**Status:** not yet asked. Raised 2026-09-11 alongside her request.
+**Status:** not yet asked. Raised 2026-09-11 alongside her request. Brenden's call the same
+day was "static 60 for now", which decides the build but not the question.
 
-**Assumed meanwhile:** 60, fixed, because that is the only number she has named.
+**Assumed meanwhile:** 60, fixed, because that is the only number she has named. It lives in
+one place, the `assessmentDue` function in the derive section, so it becomes a field on the
+record cheaply if she says it varies.
 
 ---
 
-## 5. Is the list of nine components fixed, or does she add to it?
+## 4. Is the list of nine components fixed, or does she add to it?
 
 > You listed nine things — background history, classroom observation, language sample,
 > narrative sample, formal assessment, teacher interview, assessment written, assessment
@@ -111,19 +99,7 @@ is an inference and not her answer.
 not a checkmark** — she has to report the dates to Medicaid, so a checkbox would lose the
 thing she asked for. That part is settled from her own words and is not in question.
 
----
-
-## 6. Can one student have more than one assessment over time?
-
-> Over the years you have a student, do you ever assess them more than once — a triennial
-> re-evaluation, say? Would you want to still see the old one after the new one is ordered?
-
-**Why it matters:** decides one assessment record per student or many. It is the hardest of
-the four to change later, because going from one to many has to split records that already
-exist.
-
-**Status:** not yet asked. Raised 2026-09-11.
-
-**Assumed meanwhile:** nothing chosen yet. Triennial re-evaluations make "many" likely, but
-this is the question most worth her actual answer before any store is written.
+The list is **copied onto each assessment record** when it is created, the way an objective
+carries its own fields, so this answer stays cheap. If the nine ever become ten, assessments
+she has already reported to Medicaid still render as she reported them.
 

@@ -24,14 +24,29 @@ scroll.
 ## Where work lands
 
 Feature work runs on a branch and merges to `main` only when the plan is complete and the
-suite is green. `main` is served live by GitHub Pages, so keeping it coherent means
-"is promotion urgent?" is never a judgment an unattended agent has to make.
+suite is green.
+
+**`main` is production, and she is on it.** Promotion happened; confirmed by Brenden on
+2026-09-11. GitHub Pages serves `main` and she opens that URL, so a push reaches a working
+clinician within about ten minutes. Earlier handoffs say promotion has not happened — they
+are out of date, and `docs/DELIVERY.md` is the current word.
+
+What follows from that, and did not apply while the hosted app was a beta nobody read:
+
+- **A push is a release.** Half-finished work goes on a branch, never on `main`.
+- **Changing the database shape needs its own verification.** No test in the suite performs
+  an upgrade — every test starts from a wiped database — so the suite is blind to it by
+  construction. Run `tmp/cdp-upgrade-probe.js` against the previous release before shipping
+  any change to `SCHEMA`, `DB_VERSION` or `SCHEMA_VERSION`, and confirm the backup file she
+  already holds still restores.
+- **Never leave her looking at a blank page.** A database that will not open must render a
+  sentence she can act on. Blank looks exactly like having lost everything.
 
 Small, self-contained fixes that are complete and green on their own may go straight to
 `main`.
 
-**Never promote.** Promotion — giving the clinician the URL — is Brenden's act alone. See
-`docs/DELIVERY.md`. Do not send `tmp/note-for-her.md`.
+Giving her the URL was Brenden's act and it is done. `tmp/note-for-her.md` was the note that
+did it; there is nothing left to send.
 
 ## What "verified" means
 

@@ -2,23 +2,52 @@
 
 The app is hosted at **https://brendenriggs.github.io/slp-tracker/**.
 
-## Status: beta. She does not have this URL.
+## Status: live. She uses this URL.
 
-As of 2026-09-02 Carol Ann is still working from her emailed `file://` copy of
-`slp-tracker.html`. The hosted app is a **beta environment** — Brenden's to push to and
-break freely, because nobody else is looking at it.
+**Promotion has happened.** Confirmed by Brenden on 2026-09-11. Carol Ann works from the
+hosted app, not from an emailed `file://` copy.
 
-**Everything below the "Promoting to production" heading has not happened yet.** Until it
-does, `main` carries no obligation to be coherent, and a half-finished feature on it
-harms nobody.
+This reverses the single most important standing assumption in this repo, and earlier
+handoffs still say the opposite. **`main` is production.** A push reaches her within about
+ten minutes, with nothing to send and nothing for her to accept. So:
 
-## Promoting to production
+- **A push is a release to a working clinician.** There is no beta environment any more.
+  Half-finished work does not belong on `main`; it belongs on a branch.
+- **The suite being green is not sufficient.** Verify past it — layout, scroll, fixture
+  size, and now upgrades — before pushing. See `docs/AUTONOMY.md`.
+- **Nothing announces a release to her.** She finds out by reading the version stamp, or
+  because Brenden tells her.
 
-Promotion is a single act: **giving her the URL and walking her through the migration in
-"The one-time move" below.** Do it only when `main` is green and coherent — she cannot see
-a version number climb and reason about whether a broken tab is expected.
+The migration below has already been done. It is kept because it documents why her data
+lives where it does, and because the same origin rule applies to any future move.
 
-The draft note that hands her the URL is `tmp/note-for-her.md` (gitignored, unsent).
+The draft note that handed her the URL is `tmp/note-for-her.md` (gitignored).
+
+## Changing the database shape, now that she is live
+
+Learned the hard way on 1.12.0, which added a store and so raised `DB_VERSION`.
+
+**An open tab holds the database at the version it knew.** A tab she left open on the old
+version blocks the upgrade in the tab she just reloaded. Before 1.12.0 that produced a
+**blank page** — no message, no explanation — which for someone whose records are her job
+looks exactly like having lost everything.
+
+From 1.12.0 on, three things guard this, and a schema change must keep all three working:
+
+1. An open connection **yields** when a newer version wants in (`db.onversionchange`), so a
+   stale tab can no longer block the tab she is using.
+2. A refusal is **a sentence she can act on**, not a diagnosis.
+3. Boot **catches** a database that will not open and renders that sentence with a Reload
+   button, rather than rendering nothing.
+
+Before shipping any change to `SCHEMA`, `DB_VERSION` or `SCHEMA_VERSION`, run
+`tmp/cdp-upgrade-probe.js`. It seeds the previous release, upgrades in place at the same
+URL, and checks every store survives. **No test in the suite performs an upgrade at all** —
+each one starts from a wiped database — so the suite cannot answer this question.
+
+Also check the backup file she already has still restores. `parseBackup` validates a file
+against the stores that existed at the version the file declares (`STORE_SINCE`), which is
+what lets an older backup restore without weakening the guard against a truncated one.
 
 ## Updating her copy — after promotion
 
@@ -36,7 +65,7 @@ by Brenden; the changelog is what she reads when she goes looking, not a notific
 Every release needs a line there before it ships — `tests/changelog.test.js` fails a
 version the changelog does not describe.
 
-## The one-time move from the emailed file
+## The one-time move from the emailed file — done, kept for the reasoning
 
 Her data lives in the browser, keyed to the origin it was created under. The old copy ran
 on `file://`; the hosted app runs on `https://brendenriggs.github.io`. **These are

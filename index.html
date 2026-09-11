@@ -13,6 +13,10 @@
        for a non-text graphic. --line is a border colour (1.4:1) and vanishes when a
        glyph is drawn in it — which is what happened to the attendance grid's dots. */
     --faint: #8f8f8f;
+    /* --warn (#b7791f) is 3.64:1 on white. That is fine for a filled mark and wrong for
+       every word in this app, whose body font is 15px and so gets no large-text exemption.
+       This is the same amber at ink weight, 5.9:1, for anything written rather than drawn. */
+    --warn-ink: #8a5a00;
     /* The crosshair tint. Light enough that a whole row and column of it does not
        compete with the marks sitting on top of it. */
     --hot: #eaf1fa;
@@ -93,6 +97,13 @@
   .panel h2 { font-size: 14px; margin: 0 0 10px; text-transform: uppercase;
               letter-spacing: .04em; color: var(--muted); }
   .row-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  /* The standing is said in words on the line itself; these only reinforce it, so the
+     sentence survives greyscale, a screenshot, and eyes that do not separate amber from red. */
+  .assess-standing.is-soon { color: var(--warn-ink); font-weight: 600; }
+  .assess-standing.is-over { color: var(--danger); font-weight: 600; }
+  .assess-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
+  .assess-row label { flex: 1; }
+  .assess-count { color: var(--muted); text-align: right; }
   .student-row { display: flex; gap: 10px; align-items: center; padding: 5px 0;
                  border-bottom: 1px solid var(--line); }
   .student-row:last-child { border-bottom: none; }
@@ -2673,6 +2684,93 @@ SLP.ui = (() => {
         })));
   }
 
+  // "11 Sep 2026" — the form she reads a deadline in. An ISO string is what we store and
+  // the wrong thing to put in front of her.
+  const ASSESS_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                         'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function assessHuman(dateStr) {
+    const [y, mo, d] = dateStr.split('-').map(Number);
+    return d + ' ' + ASSESS_MONTHS[mo - 1] + ' ' + y;
+  }
+
+  // How it stands, in words. Colour reinforces this line; it never carries it alone —
+  // the sentence has to survive greyscale, a screenshot, and eyes that do not separate
+  // amber from red.
+  function assessStanding(daysLeft) {
+    if (daysLeft < 0) {
+      const n = -daysLeft;
+      return { text: n + (n === 1 ? ' day over' : ' days over'), cls: 'is-over' };
+    }
+    if (daysLeft === 0) return { text: 'due today', cls: 'is-over' };
+    const text = daysLeft + (daysLeft === 1 ? ' day' : ' days');
+    return { text, cls: daysLeft <= 14 ? 'is-soon' : '' };
+  }
+
+  function assessComponentRow(assessment, comp) {
+    const base = 'assess-' + comp.key;
+    return h('div', { class: 'assess-row', 'data-key': comp.key },
+      h('input', { type: 'checkbox', id: base + '-done', checked: !!comp.date }),
+      h('label', { for: base + '-done', text: comp.label }),
+      h('input', { type: 'date', id: base + '-date', value: comp.date || '' }));
+  }
+
+  function assessFinishControl(assessment) {
+    return h('button', { class: 'linkish', id: 'assess-finish', type: 'button',
+                         text: 'Mark this assessment finished' });
+  }
+
+  function assessOrderForm(student) {
+    return h('div', { class: 'row-form', id: 'assessment-order-form' },
+      h('label', { for: 'assess-order-date', text: 'Ordered on' }),
+      h('input', { type: 'date', id: 'assess-order-date', value: SLP.ui.todayStr() }),
+      h('button', { class: 'primary', id: 'assess-order', type: 'button',
+                    text: 'Order an assessment' }));
+  }
+
+  function assessEarlier(finished) {
+    const label = finished.length === 1
+      ? '1 earlier assessment' : finished.length + ' earlier assessments';
+    return h('details', { id: 'assessment-earlier' },
+      h('summary', { text: label }),
+      ...finished.map(a => h('p', {
+        text: 'Ordered ' + assessHuman(a.orderedOn) + ' · finished ' +
+              assessHuman(a.finishedOn) + ' · ' +
+              a.components.filter(c => c.date).length + ' of ' + a.components.length,
+      })));
+  }
+
+  async function renderAssessment(container, student) {
+    const refresh = () => SLP.ui.render();
+    const today = SLP.ui.todayStr();
+    const active = await SLP.store.activeAssessment(student.id);
+    const all = await SLP.store.assessmentsForStudent(student.id);
+    const finished = all.filter(a => a.finishedOn !== null);
+
+    const panel = h('section', { class: 'panel', id: 'assessment-block' },
+      h('h2', { text: 'Assessment' }));
+
+    if (active) {
+      const due = SLP.derive.assessmentDue(active, today);
+      const standing = assessStanding(due.daysLeft);
+      panel.appendChild(h('p', { id: 'assessment-due' },
+        h('span', { text: 'Ordered ' + assessHuman(active.orderedOn) + ' · due ' +
+                          assessHuman(due.dueOn) + ' · ' }),
+        h('span', { class: 'assess-standing ' + standing.cls, text: standing.text })));
+
+      for (const comp of active.components) {
+        panel.appendChild(assessComponentRow(active, comp, refresh));
+      }
+      panel.appendChild(h('p', { class: 'assess-count', id: 'assess-count',
+                                 text: due.done + ' of ' + due.of }));
+      panel.appendChild(assessFinishControl(active, refresh));
+    } else {
+      panel.appendChild(assessOrderForm(student, refresh));
+    }
+
+    if (finished.length) panel.appendChild(assessEarlier(finished));
+    container.appendChild(panel);
+  }
+
   async function renderDetail(container, student, schools) {
     const refresh = () => SLP.ui.render();
     const detail = h('div', { id: 'student-detail' },
@@ -2705,6 +2803,11 @@ SLP.ui = (() => {
           await refresh();
         },
       })));
+
+    // First of the appended blocks, because it is the only one carrying a deadline. It is
+    // called unguarded, unlike its two neighbours: renderAssessment lives in this section,
+    // so a guard here would only hide a typo.
+    await renderAssessment(detail, student);
 
     // ui.aggregation and ui.attendance append their sections here. Both are defined
     // in later sections of this file, so both are guarded — the detail page renders

@@ -556,6 +556,29 @@ SLP.model = (() => {
     field({ label: 'Notes', type: 'text' }),
   ];
 
+  // Her nine, in her order and her words, from the text thread of 2026-09-11. The list is
+  // copied onto each assessment rather than read at render time: whether it is fixed is
+  // still her question (docs/OPEN-QUESTIONS.md), and an assessment she has already reported
+  // to Medicaid must keep rendering as she reported it, whatever the list becomes later.
+  const ASSESSMENT_COMPONENTS = Object.freeze([
+    ['backgroundHistory',    'Background history'],
+    ['classroomObservation', 'Classroom observation'],
+    ['languageSample',       'Language sample'],
+    ['narrativeSample',      'Narrative sample'],
+    ['formalAssessment',     'Formal assessment'],
+    ['teacherInterview',     'Teacher interview'],
+    ['assessmentWritten',    'Assessment written'],
+    ['assessmentUploaded',   'Assessment uploaded'],
+    ['assessmentBilled',     'Assessment billed'],
+  ]);
+
+  const presetAssessmentComponents = () =>
+    ASSESSMENT_COMPONENTS.map(([key, label]) => ({ key, label, date: null }));
+
+  // §derive has its own copy of this test. Model is loaded first and stays dependency-free,
+  // so it keeps its own rather than reaching forward for one.
+  const isDateStr = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s));
+
   function seedValues(objective) {
     const values = {};
     for (const f of objective.fields) {
@@ -636,7 +659,7 @@ SLP.model = (() => {
 
   return {
     uid, now, field, presetTrials, seedValues, setValue, hasEnteredData, ratio, displayText,
-    GRADES, gradeLabel, ATTENDANCE_STATUSES,
+    GRADES, gradeLabel, ATTENDANCE_STATUSES, presetAssessmentComponents,
 
     student: ({ name, grade = '', school = '', background = '' }) => ({
       id: uid('s'), name, grade, school, background,
@@ -668,6 +691,17 @@ SLP.model = (() => {
       id: uid('dp'), sessionId, studentId, objectiveId: objective.id,
       values: seedValues(objective), updatedAt: now(),
     }),
+    // The whole feature hangs off this one date, so it is guarded here rather than in the
+    // form: a record with no order date has no due date, and nothing downstream could tell
+    // you why.
+    assessment: ({ studentId, orderedOn, components = presetAssessmentComponents() }) => {
+      if (!isDateStr(orderedOn)) {
+        throw new Error('an assessment needs the date it was ordered, as YYYY-MM-DD: ' +
+                        (orderedOn === '' || orderedOn == null ? '(blank)' : orderedOn));
+      }
+      return { id: uid('as'), studentId, orderedOn, components,
+               finishedOn: null, createdAt: now(), updatedAt: now() };
+    },
   };
 })();
 

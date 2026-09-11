@@ -215,3 +215,44 @@ test('an unrecognised grade shows itself rather than vanishing', async () => {
   eq(label(''), '', 'no grade renders as nothing');
   eq(label(undefined), '', 'a missing grade renders as nothing');
 });
+
+test('the assessment preset is her nine components, in her order', async () => {
+  const w = await loadApp();
+  const comps = w.SLP.model.presetAssessmentComponents();
+  eq(comps.map(c => c.key), [
+    'backgroundHistory', 'classroomObservation', 'languageSample', 'narrativeSample',
+    'formalAssessment', 'teacherInterview', 'assessmentWritten', 'assessmentUploaded',
+    'assessmentBilled',
+  ], 'her nine, in the order she wrote them');
+  eq(comps[0].label, 'Background history', 'labelled in her words');
+  eq(comps.every(c => c.date === null), true, 'nothing is done until she says so');
+});
+
+test('the preset is a fresh copy each time, so one record cannot edit another', async () => {
+  const w = await loadApp();
+  const a = w.SLP.model.presetAssessmentComponents();
+  const b = w.SLP.model.presetAssessmentComponents();
+  a[0].date = '2026-10-02';
+  eq(b[0].date, null, 'the second copy is untouched');
+});
+
+test('an assessment carries its own copy of the components', async () => {
+  const w = await loadApp();
+  const as = w.SLP.model.assessment({ studentId: 's1', orderedOn: '2026-09-11' });
+  eq(as.components.length, 9, 'the nine travel with the record');
+  eq(as.finishedOn, null, 'a new assessment is open');
+  eq(as.studentId, 's1', 'it belongs to the student');
+  assert(as.id.startsWith('as_'), 'assessment ids are prefixed as_, got ' + as.id);
+});
+
+test('an assessment refuses to exist without the date it was ordered', async () => {
+  const w = await loadApp();
+  const e = await throws(() => w.SLP.model.assessment({ studentId: 's1', orderedOn: '' }),
+                         'an empty order date must be rejected');
+  assert(/ordered/i.test(e.message),
+         'the message must name the order date, got: ' + e.message);
+  const e2 = await throws(() => w.SLP.model.assessment({ studentId: 's1', orderedOn: '11/09/2026' }),
+                          'a non-ISO date must be rejected');
+  assert(/11\/09\/2026/.test(e2.message),
+         'the message must quote what was rejected, got: ' + e2.message);
+});
